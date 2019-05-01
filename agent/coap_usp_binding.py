@@ -192,7 +192,11 @@ class CoapSendingThread(threading.Thread):
         my_event_loop.set_debug(self._debug)
         asyncio.set_event_loop(my_event_loop)
 
-        my_event_loop.run_until_complete(self._issue_request(self._to_addr, self._serialized_msg))
+        try:
+            my_event_loop.run_until_complete(self._issue_request(self._to_addr, self._serialized_msg))
+        except Exception as e:
+            print("AGENT:  CoapSendingThread exception: "+str(e))
+
         my_event_loop.close()
 
     @asyncio.coroutine
