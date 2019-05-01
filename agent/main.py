@@ -32,6 +32,7 @@ SOFTWARE.
 
 
 import logging
+import sys
 import argparse
 import prometheus_client
 
@@ -47,6 +48,9 @@ class Agent:
         debug = (log_level == logging.DEBUG)
         logging.basicConfig(filename=log_file_name, level=log_level,
                             format='%(asctime)-15s %(name)s %(levelname)-8s %(message)s')
+        if not log_file_name:
+            logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
+
 
         # Handle Command Line Arguments
         parser = argparse.ArgumentParser()
