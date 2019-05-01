@@ -57,10 +57,10 @@ import aiocoap.resource
 from agent import generic_usp_binding
 
 
-try:
-    from asyncio import ensure_future as asyncio_ensure_future
-except ImportError:
-    from asyncio import async as asyncio_ensure_future
+if hasattr(asyncio, 'ensure_future'):
+    asyncio_ensure_future = asyncio.ensure_future
+else:  # Deprecated since Python 3.4.4
+    asyncio_ensure_future = getattr(asyncio, "async")
 
 
 class MyCoapResource(aiocoap.resource.Resource):
