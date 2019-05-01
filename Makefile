@@ -1,4 +1,4 @@
-.PHONY: schema
+.PHONY: schema controller
 
 init:
 	pip install --upgrade pip
@@ -26,5 +26,9 @@ run:
 runbin:
 	python3 bin/agent.py -t test
 
+controller:
+	python3 bin/controller.py 
+
 runcoap:
 	python3 bin/agent.py -t test -c --coap-port 15683
+
