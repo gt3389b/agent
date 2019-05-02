@@ -25,8 +25,21 @@ class Message(object):
         self._record.payload_security = usp_record.Record.PLAINTEXT
         self._record.no_session_context.payload = self._msg.SerializeToString()
 
+    def SerializeToString(self):
+        return self._record.SerializeToString()
+
     def __str__(self):
         return str(self._record) + str(self._msg)
+
+class Get(Message):
+    def __init__(self, to_id, from_id, param_paths):
+        super().__init__(to_id=to_id, from_id=from_id)
+        self.serialize(param_paths)
+
+    def serialize(self, param_paths):
+        self._msg.header.msg_type = usp_msg.Header.GET
+        self._msg.body.request.get.param_paths.extend(param_paths)
+        super().generate_record()
 
 class Set(Message):
     def __init__(self, to_id, from_id, objects, allow_partial=False):
@@ -91,3 +104,6 @@ class SetValidationError(Exception):
     def get_error_message(self):
         """Retrieve the Error Message"""
         return self._err_msg
+
+def parse(message):
+    print(message)
