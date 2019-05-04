@@ -58,7 +58,7 @@ class UspResponseHandler:
             self._validate_usp_record_request(req_record)
             req_msg = self._handle_usp_msg(req_record)
             self._validate_usp_msg_request(req_msg)
-            self._logger.info("Received a [%s] Response",
+            self._logger.debug("Received a [%s] Response",
                               req_msg.body.request.WhichOneof("req_type"))
 
             resp_msg, resp_record = self._process_request(req_record, req_msg)
@@ -108,7 +108,7 @@ class UspResponseHandler:
         if not req_as_record.WhichOneof("record_type") == "no_session_context":
             raise ProtocolValidationError("USP Record has an unsupported Record Type")
 
-        self._logger.info("Incoming USP Record passed validation")
+        self._logger.debug("Incoming USP Record passed validation")
 
     def _handle_usp_msg(self, req_as_record):
         """Deserialize the USP Record in the Incoming Response"""
@@ -133,10 +133,10 @@ class UspResponseHandler:
         if not req_as_msg.header.msg_id:
             raise ProtocolValidationError("USP Message Header missing msg_id")
 
-        if not req_as_msg.body.WhichOneof("msg_body") == "response":
-            raise ProtocolValidationError("USP Message Body doesn't contain a Response element")
+        #if not req_as_msg.body.WhichOneof("msg_body") == "response":
+        #    raise ProtocolValidationError("USP Message Body doesn't contain a Response element")
 
-        self._logger.info("Incoming USP Message passed validation")
+        self._logger.debug("Incoming USP Message passed validation")
 
     def _process_request(self, req_as_record, req_as_msg):
         """Processing the incoming Message and return a Response"""
@@ -169,6 +169,8 @@ class UspResponseHandler:
         #    NUM_UNKNOWN_MSGS_METRIC.inc()
 
         # Wrap the USP Message response into a USP Record
+        elif req_as_msg.header.msg_type == usp_msg.Header.NOTIFY:
+            self._logger.info("Notify")
         resp_record.version = "1.0"
         resp_record.to_id = to_id
         resp_record.from_id = self._id

@@ -61,11 +61,11 @@ class CoapSendingThread(threading.Thread):
         self._logger.debug("Creating a CoAP Client Context")
         context = yield from aiocoap.Context.create_client_context()
 
-        self._logger.info("Sending a CoAP message to the following address: %s", to_addr)
+        self._logger.debug("Sending a CoAP message to the following address: %s", to_addr)
         self._logger.debug("Payload being sent: [%s]", serialized_msg)
         try:
             resp = yield from context.request(msg).response
-            self._logger.info("CoAP Message Sent and [%s] Response received", resp.code)
+            self._logger.debug("CoAP Message Sent and [%s] Response received", resp.code)
         except aiocoap.error.RequestTimedOut:
             self._logger.warning("CoAP Message Sent, but no Response received due to a Timeout Error")
 
@@ -114,7 +114,7 @@ class Message(object):
             self._validate_usp_record_request(req_record)
             req_msg = self._handle_usp_msg(req_record)
             self._validate_usp_msg_request(req_msg)
-            self._logger.info("Received a [%s] Request",
+            self._logger.debug("Received a [%s] Request",
                               req_msg.body.request.WhichOneof("req_type"))
 
             #TODO:  We need a binding here
@@ -165,7 +165,7 @@ class Message(object):
         if not req_as_record.WhichOneof("record_type") == "no_session_context":
             raise ProtocolValidationError("USP Record has an unsupported Record Type")
 
-        self._logger.info("Incoming USP Record passed validation")
+        self._logger.debug("Incoming USP Record passed validation")
 
     def _handle_usp_msg(self, req_as_record):
         """Deserialize the USP Record in the Incoming Request"""
@@ -192,7 +192,7 @@ class Message(object):
         if not req_as_msg.body.WhichOneof("msg_body") == "request":
             raise ProtocolValidationError("USP Message Body doesn't contain a Request element")
 
-        self._logger.info("Incoming USP Message passed validation")
+        self._logger.debug("Incoming USP Message passed validation")
 
 
 class MessageType(Enum):
