@@ -459,7 +459,7 @@ class Database:
         """Save the contents of the DB back into the File"""
         with self._file_write_lock:
             with open(self._db_filename, "w") as db_file:
-                json.dump(self._db, db_file)
+                json.dump(self._db, db_file, indent=4)
 
 
 class NoSuchPathError(Exception):
