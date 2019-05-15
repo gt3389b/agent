@@ -1,9 +1,10 @@
 import logging
 import json
-from controller.controller import Controller
+#from controller.controller import Controller
 import message
 from controller.response_handler import UspResponseHandler
 from mtp.coap_usp_binding import CoapUspBinding
+from controller import mdns
 
 class DeviceManager(object):
     def __init__(self, controller_name, mtp, debug=True):
@@ -52,7 +53,11 @@ def main():
     # set params
     deviceId = 'ops::00D09E-Test-T01'
     dev_manager.get(deviceId, ['Device.LocalAgent.Controller.2.PeriodicNotifInterval'])
-    dev_manager.set(deviceId, [{'obj_path':'Device.LocalAgent.Controller.2.', 'param_settings': [{'param':'PeriodicNotifInterval', 'value':'1'}] }])
+    dev_manager.set(deviceId, [{'obj_path':'Device.LocalAgent.Controller.2.', 'param_settings': [{'param':'PeriodicNotifInterval', 'value':'5'}] }])
+
+    # announce presence
+    _mdns_announcer = mdns.Announcer("127.0.0.1", 25683, "/usp", "controller-coap-johnb")
+    _mdns_announcer.announce()
 
 if __name__ == "__main__":
     main()
