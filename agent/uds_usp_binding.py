@@ -93,7 +93,7 @@ class UdsUspBinding(generic_usp_binding.GenericUspBinding):
             try:
                 # If in listen mode and not connected, accept connection
                 if self._mode == 'listen' and not self._transport.is_connected():
-                    logger.info("Waiting for UDS connection...")
+                    logger.info("Waiting for incoming messages...")
                     if self._transport.accept_connection(timeout=1.0):
                         logger.info("UDS connection established")
                     continue
@@ -160,16 +160,42 @@ class UdsUspBinding(generic_usp_binding.GenericUspBinding):
         except Exception as e:
             logger.error(f"Error handling received data: {e}", exc_info=True)
             
-    def send_msg(self, to_id, usp_msg):
+    def send_msg(self, serialized_msg, to_addr):
         """
-        Send a USP message via UDS
+        Send a USP message via UDS (GenericUspBinding interface)
+        
+        Args:
+            serialized_msg (bytes): Serialized USP Record
+            to_addr (str): Socket path to send to
+        """
+        try:
+            logger.info(f"Sending message to {to_addr}")
+            
+            # Create a new connection to the destination socket
+            transport = uds.UdsTransport(to_addr, 'connect')
+            transport.start()
+            
+            # Send the message
+            transport.send_message(serialized_msg)
+            
+            # Close the connection
+            transport.close()
+            
+            logger.info(f"Message sent successfully to {to_addr}")
+            
+        except Exception as e:
+            logger.error(f"Error sending message to {to_addr}: {e}", exc_info=True)
+    
+    def send_response(self, to_id, usp_msg):
+        """
+        Send a USP response via existing connection
         
         Args:
             to_id (str): Destination endpoint ID
             usp_msg (bytes): Serialized USP message
         """
         if not self._transport or not self._transport.is_connected():
-            logger.warning("Cannot send message: transport not connected")
+            logger.warning("Cannot send response: transport not connected")
             return
         
         try:
@@ -185,12 +211,12 @@ class UdsUspBinding(generic_usp_binding.GenericUspBinding):
             # Serialize record
             record_bytes = record.SerializeToString()
             
-            # Send via transport
+            # Send via existing transport connection
             self._transport.send_message(record_bytes)
-            logger.debug(f"Sent UDS message to {to_id}: {len(record_bytes)} bytes")
+            logger.debug(f"Sent UDS response to {to_id}: {len(record_bytes)} bytes")
             
         except Exception as e:
-            logger.error(f"Failed to send UDS message: {e}", exc_info=True)
+            logger.error(f"Failed to send UDS response: {e}", exc_info=True)
             
     def listen_to_notifications(self, notification_q):
         """

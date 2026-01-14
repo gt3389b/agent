@@ -1,0 +1,7 @@
+{
+  "endpoint_id": "controller-coap-johnb",
+  "coap": {
+    "port": 25683,
+    "resource": "usp"
+  }
+}

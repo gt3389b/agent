@@ -124,7 +124,9 @@ class UdsAgent(abstract_agent.AbstractAgent):
         Returns:
             NotificationSender: Notification sender instance
         """
-        return UdsNotificationSender(notif, controller_id, self._binding)
+        # Get controller socket path from database
+        controller_socket_path = self._db.get(mtp_path + "UDS.UnixSocketPath")
+        return UdsNotificationSender(notif, self._binding, controller_socket_path)
         
     def _get_periodic_notif_handler(self, agent_id, controller_id, mtp_path,
                                     subscription_id, param_path):
@@ -177,27 +179,27 @@ class UdsAgent(abstract_agent.AbstractAgent):
 class UdsNotificationSender(abstract_agent.NotificationSender):
     """UDS-specific notification sender"""
     
-    def __init__(self, notif, controller_id, binding):
+    def __init__(self, notif, binding, controller_socket_path):
         """
         Initialize notification sender
         
         Args:
             notif: Notification message
-            controller_id (str): Controller endpoint ID
-            binding: UDS binding instance
+            binding: UDS binding instance (for agent's listening socket)
+            controller_socket_path (str): Path to controller's socket
         """
-        super().__init__(notif)
-        self._controller_id = controller_id
-        self._binding = binding
+        super().__init__(notif, binding)
+        self._controller_socket_path = controller_socket_path
         
-    def send_notification(self, notif_bytes):
+    def _retrieve_to_addr(self):
         """
-        Send notification via UDS
+        Retrieve controller socket path for sending notification
         
-        Args:
-            notif_bytes (bytes): Serialized notification message
+        Returns:
+            str: Controller socket path
         """
-        self._binding.send_msg(self._controller_id, notif_bytes)
+        logger.info(f"Sending Boot! notification to controller at {self._controller_socket_path}")
+        return self._controller_socket_path
 
 
 class UdsPeriodicNotifHandler(abstract_agent.AbstractPeriodicNotifHandler):
