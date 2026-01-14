@@ -182,6 +182,64 @@
 
 ---
 
+### 🔴 TODO-022: Fix CoAP Agent asyncio.coroutine Deprecation
+**Priority**: HIGH  
+**Location**: `agent/coap_usp_binding.py:75`
+
+**Current Code**:
+```python
+@asyncio.coroutine
+def render_post(self, request):
+    # ... CoAP request handling
+```
+
+**Issue**: `@asyncio.coroutine` decorator was removed in Python 3.11+, causing import failures
+
+**Error**:
+```
+AttributeError: module 'asyncio' has no attribute 'coroutine'. Did you mean: 'coroutines'?
+```
+
+**Action Plan**:
+
+1. **Migrate to async/await Syntax**:
+   ```python
+   # Replace @asyncio.coroutine with async def
+   async def render_post(self, request):
+       # ... implementation
+   ```
+
+2. **Update yield from to await**:
+   ```python
+   # Old:
+   result = yield from some_coroutine()
+   
+   # New:
+   result = await some_coroutine()
+   ```
+
+3. **Update aiocoap Usage**:
+   - Review aiocoap 0.4.17 async patterns
+   - Check for any deprecated asyncio APIs
+   - Update context manager usage if needed
+
+4. **Test CoAP Agent**:
+   ```bash
+   python3 -m agent.main -c --coap-port 5683
+   # Verify agent starts without errors
+   # Test CoAP message exchange
+   ```
+
+**Estimated Effort**: 2-4 hours  
+**Dependencies**: None (can be done independently)  
+**Risk**: Low (well-documented migration path)
+
+**References**:
+- [PEP 492 - Coroutines with async/await](https://peps.python.org/pep-0492/)
+- [asyncio migration guide](https://docs.python.org/3/library/asyncio-task.html)
+
+---
+
 ### 🔴 TODO-003: Implement Payload Validation (CoAP)
 **Priority**: HIGH  
 **Location**: 
@@ -1459,38 +1517,41 @@
 
 ### Immediate (Next 2 Weeks)
 1. ⬜ TODO-001: Docker base image upgrade
-2. ⬜ TODO-003: CoAP payload validation
-3. ⬜ TODO-004: STOMP payload validation
-4. ✅ TODO-002: Dependency updates - **COMPLETED**
+2. ⬜ TODO-022: Fix CoAP asyncio.coroutine (Python 3.11+ compatibility)
+3. ⬜ TODO-003: CoAP payload validation
+4. ⬜ TODO-004: STOMP payload validation
+5. ✅ TODO-002: Dependency updates - **COMPLETED**
+6. ✅ TODO-021: UDS MTP implementation - **COMPLETED**
 
 ### Short-term (Next Month)
-5. ⬜ TODO-007: Immutable parameter protection
-6. ⬜ TODO-005: Thread shutdown
-7. ⬜ TODO-006: Shutdown coordination
-8. ⬜ TODO-014: Container improvements
+7. ⬜ TODO-007: Immutable parameter protection
+8. ⬜ TODO-005: Thread shutdown
+9. ⬜ TODO-006: Shutdown coordination
+10. ⬜ TODO-014: Container improvements
 
 ### Medium-term (Next Quarter)
-9. ⬜ TODO-008: Plugin architecture
-10. ⬜ TODO-013: Python 3 migration
-11. ⬜ TODO-015: Test coverage expansion
-12. ⬜ TODO-017: API documentation
+11. ⬜ TODO-008: Plugin architecture
+12. ⬜ TODO-013: Python 3 migration
+13. ⬜ TODO-015: Test coverage expansion
+14. ⬜ TODO-017: API documentation
 
 ### Long-term (6+ Months)
-13. ✅ TODO-019: USP spec update - **COMPLETED (TR-369 v1.4.2)**
-14. ⬜ TODO-020: Performance optimization
+15. ✅ TODO-019: USP spec update - **COMPLETED (TR-369 v1.4.2)**
+16. ⬜ TODO-020: Performance optimization
 
 ### Low Priority (As Needed)
-15. ⬜ TODO-009: File cleanup
-16. ⬜ TODO-010: Better ID handling
-17. ⬜ TODO-011: Notification list
-18. ⬜ TODO-012: Message binding
-19. ⬜ TODO-016: Linting/formatting
-20. ⬜ TODO-018: Architecture docs
+17. ⬜ TODO-009: File cleanup
+18. ⬜ TODO-010: Better ID handling
+19. ⬜ TODO-011: Notification list
+20. ⬜ TODO-012: Message binding
+21. ⬜ TODO-016: Linting/formatting
+22. ⬜ TODO-018: Architecture docs
 
 ---
 
 ## Estimated Total Effort
-- **Critical**: 28-40 hours
+- **Critical**: 30-44 hours (Docker + CoAP fix)
+- **High**: 14-20 hours
 - **High**: 14-20 hours  
 - **Medium**: 76-104 hours
 - **Low**: 45-62 hours
