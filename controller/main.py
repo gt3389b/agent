@@ -16,10 +16,14 @@ def main_coap(config_file):
 
 def main_uds(config_file):
     """Start UDS controller"""
+    import asyncio
     from controller import uds_controller
     
-    controller = uds_controller.UdsController(config_file)
-    controller.start()
+    async def run_controller():
+        controller = uds_controller.UdsController(config_file)
+        await controller.start()
+    
+    asyncio.run(run_controller())
 
 
 def main():

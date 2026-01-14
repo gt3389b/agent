@@ -14,8 +14,8 @@ import argparse
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from controller.uds_controller_async import UdsControllerAsync
-from agent.uds_agent_async import UdsAgentAsync
+from controller.uds_controller import UdsController
+from agent.uds_agent import UdsAgent
 
 
 # Configure logging
@@ -44,7 +44,7 @@ class UspSimulator:
             logger.info("="*60)
             
             controller_config = f'cfg/{self.transport_type}-controller.json'
-            self.controller = UdsControllerAsync(controller_config)
+            self.controller = UdsController(controller_config)
             await self.controller.start()
             
         except asyncio.CancelledError:
@@ -68,7 +68,7 @@ class UspSimulator:
             dm_file = f"database/{self.transport_type}-dm.json"
             db_file = f"database/{self.transport_type}-db.json"
             
-            self.agent = UdsAgentAsync(
+            self.agent = UdsAgent(
                 dm_file=dm_file,
                 db_file=db_file,
                 cfg_file="cfg/agent.json"

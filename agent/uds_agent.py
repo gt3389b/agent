@@ -21,214 +21,246 @@ SOFTWARE.
 
 # File Name: uds_agent.py
 #
-# Description: UDS USP Agent implementation
+# Description: Async UDS USP Agent implementation
 #
-# Functionality:
-#   Class: UdsAgent(AbstractAgent)
-#     - Unix Domain Socket based USP agent
-#     - Notification handling for UDS
 """
 
 import logging
+import asyncio
 
-from agent import abstract_agent
-from agent import uds_usp_binding
+from agent import agent_db
 from agent import notify
-
+from agent import request_handler
+from mtp.uds import UdsTransport
+from message import usp_record_pb2
+from message import usp_msg_pb2
 
 logger = logging.getLogger(__name__)
 
 
-class UdsAgent(abstract_agent.AbstractAgent):
-    """UDS-based USP Agent"""
+class UdsAgent:
+    """Async UDS-based USP Agent"""
     
-    def __init__(self, dm_file, db_file, net_intf, cfg_file_name='cfg/agent.json', debug=False):
+    def __init__(self, dm_file, db_file, cfg_file='cfg/agent.json'):
         """
-        Initialize UDS Agent
+        Initialize Async UDS Agent
         
         Args:
             dm_file (str): Data model file path
             db_file (str): Database file path
-            net_intf (str): Network interface (unused for UDS)
-            cfg_file_name (str): Configuration file path
-            debug (bool): Enable debug logging
+            cfg_file (str): Config file path
         """
-        super().__init__(dm_file, db_file, net_intf, cfg_file_name, debug)
+        # Initialize database
+        self._db = agent_db.Database(dm_file, db_file, "")
         
-        self._binding = None
-        
-        # Get agent endpoint ID from database
+        # Get agent endpoint ID
         self._agent_id = self._db.get("Device.LocalAgent.EndpointID")
         
-        # Read UDS configuration from database
-        # Device.LocalAgent.MTP.1.UDS.UnixSocketPath
-        mtp_instances = self._db.find_instances("Device.LocalAgent.MTP.")
+        # Initialize request handler
+        self._request_handler = request_handler.UspRequestHandler(
+            self._agent_id,
+            self._db
+        )
         
-        socket_path = None
-        mode = "listen"  # Default mode
+        # Find UDS MTP configuration
+        mtp_path, socket_path, mode = self._find_uds_mtp()
         
-        for mtp_path in mtp_instances:
-            if self._db.get(mtp_path + "Enable"):
-                protocol = self._db.get(mtp_path + "Protocol")
-                if protocol == "UDS":
-                    socket_path = self._db.get(mtp_path + "UDS.UnixSocketPath")
-                    logger.info(f"Found UDS MTP: socket={socket_path}")
-                    break
-        
-        if not socket_path:
-            raise ValueError("No enabled UDS MTP found in database")
-        
-        # Try to get mode from Device.UDS.UnixSocket table if it exists
-        try:
-            uds_socket_instances = self._db.find_instances("Device.UDS.UnixSocket.")
-            for socket_inst_path in uds_socket_instances:
-                inst_path = self._db.get(socket_inst_path + "Path")
-                if inst_path == socket_path:
-                    mode_val = self._db.get(socket_inst_path + "Mode")
-                    if mode_val:
-                        mode = mode_val.lower()
-                    break
-        except Exception:
-            # If UDS.UnixSocket table doesn't exist, use default
-            pass
-        
-        logger.info(f"UDS Agent initialized: {self._agent_id}")
+        logger.info(f"Async UDS Agent initialized: {self._agent_id}")
         logger.info(f"  Socket: {socket_path} (mode={mode})")
         
-        # Initialize UDS binding
-        self._binding = uds_usp_binding.UdsUspBinding(
-            socket_path=socket_path,
-            mode=mode,
-            endpoint_id=self._agent_id
-        )
+        self._socket_path = socket_path
+        self._mode = mode
+        self._transport = None
+        self._periodic_task = None
         
-        # Set up services
-        self._service_map["uds"] = self._binding
+        # Get controller information for Boot notification
+        self._controller_socket = self._db.get("Device.LocalAgent.Controller.1.MTP.1.UDS.UnixSocketPath")
+        self._controller_id = self._db.get("Device.LocalAgent.Controller.1.EndpointID")
         
-        # Initialize subscriptions
-        self.init_subscriptions()
+    def _find_uds_mtp(self):
+        """Find UDS MTP configuration"""
+        num_mtps = int(self._db.get("Device.LocalAgent.MTPNumberOfEntries"))
         
-    def _get_supported_protocol(self):
-        """Return supported protocol name"""
-        return "UDS"
-        
-    def _get_notification_sender(self, notif, controller_id, mtp_path):
-        """
-        Get notification sender for UDS
-        
-        Args:
-            notif: Notification to send
-            controller_id (str): Controller endpoint ID
-            mtp_path (str): MTP path for controller
+        for i in range(1, num_mtps + 1):
+            mtp_path = f"Device.LocalAgent.MTP.{i}."
+            protocol = self._db.get(mtp_path + "Protocol")
             
-        Returns:
-            NotificationSender: Notification sender instance
-        """
-        # Get controller socket path from database
-        controller_socket_path = self._db.get(mtp_path + "UDS.UnixSocketPath")
-        return UdsNotificationSender(notif, self._binding, controller_socket_path)
+            if protocol == "UDS":
+                socket_path = self._db.get(mtp_path + "UDS.UnixSocketPath")
+                
+                # Get mode from Device.UDS.UnixSocket table (optional)
+                mode = "listen"  # Default
+                try:
+                    num_sockets = int(self._db.get("Device.UDS.UnixSocketNumberOfEntries"))
+                    for j in range(1, num_sockets + 1):
+                        sock_path = self._db.get(f"Device.UDS.UnixSocket.{j}.Path")
+                        if sock_path == socket_path:
+                            mode = self._db.get(f"Device.UDS.UnixSocket.{j}.Mode")
+                            if mode:
+                                mode = mode.lower()
+                            break
+                except:
+                    pass
+                
+                logger.info(f"Found UDS MTP: socket={socket_path}")
+                return mtp_path, socket_path, mode
         
-    def _get_periodic_notif_handler(self, agent_id, controller_id, mtp_path,
-                                    subscription_id, param_path):
-        """
-        Get periodic notification handler for UDS
-        
-        Args:
-            agent_id (str): Agent endpoint ID
-            controller_id (str): Controller endpoint ID
-            mtp_path (str): MTP path
-            subscription_id (str): Subscription ID
-            param_path (str): Parameter path to monitor
+        raise ValueError("No UDS MTP found in database")
+    
+    async def send_boot_notification(self):
+        """Send Boot! notification to controller"""
+        try:
+            logger.info(f"Sending Boot! notification to {self._controller_socket}")
             
-        Returns:
-            PeriodicNotifHandler: Handler instance
-        """
-        return UdsPeriodicNotifHandler(
-            self._db, "uds-periodic-notif",
-            agent_id, controller_id, subscription_id, 
-            param_path, self._binding
-        )
-        
-    def start_listening(self, timeout=15):
-        """Start listening for UDS messages"""
-        logger.info("Starting UDS agent listening")
-        
-        # Start parent's message processing
-        super().start_listening()
-        
-        # Start binding
-        self._binding.start_listening()
-        
-        # Create and start binding listener
-        msg_handler = self.get_msg_handler()
-        listener = abstract_agent.BindingListener("uds-binding", self._binding, msg_handler, timeout)
-        listener.start()
-        
-        # Wait for listener to complete
-        listener.join()
-        
-    def clean_up(self):
-        """Clean up UDS agent resources"""
-        logger.info("Cleaning up UDS agent")
-        
-        # Clean up binding
-        if self._binding:
-            self._binding.clean_up()
-
-
-class UdsNotificationSender(abstract_agent.NotificationSender):
-    """UDS-specific notification sender"""
+            # Create Boot notification
+            boot_notif = notify.BootNotification(
+                self._agent_id,
+                self._controller_id,
+                "sub-boot-uds-ctrl-1",
+                self._db
+            )
+            
+            # Generate notification message
+            notif_msg = boot_notif.generate_notif_msg()
+            notif_record = boot_notif.wrap_notif_in_record(notif_msg)
+            
+            # Connect to controller and send
+            transport = UdsTransport(self._controller_socket, 'connect')
+            await transport.connect()
+            await transport.send_message(notif_record.SerializeToString())
+            await transport.close()
+            
+            logger.info("✓ Boot! notification sent successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to send Boot notification: {e}", exc_info=True)
     
-    def __init__(self, notif, binding, controller_socket_path):
-        """
-        Initialize notification sender
+    async def start(self):
+        """Start the async UDS agent"""
+        self._transport = UdsTransport(self._socket_path, self._mode)
         
-        Args:
-            notif: Notification message
-            binding: UDS binding instance (for agent's listening socket)
-            controller_socket_path (str): Path to controller's socket
-        """
-        super().__init__(notif, binding)
-        self._controller_socket_path = controller_socket_path
+        logger.info(f"Agent starting on {self._socket_path}")
         
-    def _retrieve_to_addr(self):
-        """
-        Retrieve controller socket path for sending notification
+        # Send Boot notification
+        await self.send_boot_notification()
         
-        Returns:
-            str: Controller socket path
-        """
-        logger.info(f"Sending Boot! notification to controller at {self._controller_socket_path}")
-        return self._controller_socket_path
-
-
-class UdsPeriodicNotifHandler(abstract_agent.AbstractPeriodicNotifHandler):
-    """UDS-specific periodic notification handler"""
+        # Start periodic notification task
+        self._periodic_task = asyncio.create_task(self._periodic_notification_loop())
+        
+        # Start listening for controller messages
+        await self._transport.start_server(self._handle_message)
+        
+        logger.info("Agent listening for controller messages...")
+        
+        # Keep server running
+        async with self._transport.server:
+            await self._transport.server.serve_forever()
     
-    def __init__(self, database, thread_name, from_id, to_id,
-                 subscription_id, param, binding):
+    async def _handle_message(self, data, writer):
         """
-        Initialize periodic notification handler
+        Handle received USP message from controller
         
         Args:
-            database: Agent database
-            thread_name (str): Thread name
-            from_id (str): Agent endpoint ID
-            to_id (str): Controller endpoint ID
-            subscription_id (str): Subscription ID
-            param (str): Parameter to monitor
-            binding: UDS binding instance
+            data (bytes): Raw message data
+            writer: Stream writer for responses
         """
-        super().__init__(database, thread_name, from_id, to_id,
-                        subscription_id, param)
-        self._binding = binding
+        try:
+            # Parse USP Record
+            record = usp_record_pb2.Record()
+            record.ParseFromString(data)
+            
+            logger.info("=" * 60)
+            logger.info("RECEIVED USP MESSAGE FROM CONTROLLER:")
+            logger.info(f"  From: {record.from_id}")
+            logger.info(f"  To: {record.to_id}")
+            
+            # Parse the USP Message
+            msg = usp_msg_pb2.Msg()
+            msg.ParseFromString(record.no_session_context.payload)
+            
+            # Check message type
+            if msg.header.msg_type == usp_msg_pb2.Header.SET:
+                logger.info("  Message Type: SET")
+                
+                # Process Set request using request handler
+                req_msg, req_record, resp_msg, resp_payload = self._request_handler.handle_request(data)
+                
+                logger.info("✓ Set request processed successfully")
+                logger.info(f"  Response payload size: {len(resp_payload)} bytes")
+                
+                # Send response back to controller
+                if writer:
+                    await self._transport.send_message(resp_payload, writer)
+                    logger.info("✓ Set response sent to controller")
+            else:
+                msg_type = msg.header.msg_type
+                logger.warning(f"Unhandled message type: {msg_type}")
+            
+            logger.info("=" * 60)
+            
+        except Exception as e:
+            logger.error(f"Error handling message: {e}", exc_info=True)
+    
+    async def _periodic_notification_loop(self):
+        """Send periodic notifications at configured interval"""
+        try:
+            # Wait a moment for everything to initialize
+            await asyncio.sleep(1)
+            
+            while True:
+                # Get current interval from database
+                interval_str = self._db.get("Device.LocalAgent.Controller.1.PeriodicNotifInterval")
+                interval = int(interval_str) if interval_str else 30
+                
+                if interval > 0:
+                    # Send periodic notification
+                    await self._send_periodic_notification()
+                    
+                    # Wait for the interval
+                    await asyncio.sleep(interval)
+                else:
+                    # If interval is 0, periodic notifications are disabled
+                    await asyncio.sleep(10)  # Check again in 10 seconds
+                    
+        except asyncio.CancelledError:
+            logger.info("Periodic notification task cancelled")
+        except Exception as e:
+            logger.error(f"Error in periodic notification loop: {e}", exc_info=True)
+    
+    async def _send_periodic_notification(self):
+        """Send Periodic! notification to controller"""
+        try:
+            logger.info("Sending Periodic! notification to controller...")
+            
+            # Create Periodic notification
+            periodic_notif = notify.PeriodicNotification(
+                self._agent_id,
+                self._controller_id,
+                "sub-periodic-uds-ctrl-1",
+                self._db
+            )
+            
+            # Generate notification message
+            notif_msg = periodic_notif.generate_notif_msg()
+            notif_record = periodic_notif.wrap_notif_in_record(notif_msg)
+            
+            # Connect to controller and send
+            transport = UdsTransport(self._controller_socket, 'connect')
+            await transport.connect()
+            await transport.send_message(notif_record.SerializeToString())
+            await transport.close()
+            
+            logger.info("✓ Periodic! notification sent successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to send Periodic notification: {e}", exc_info=True)
+    
+    async def stop(self):
+        """Stop the agent and clean up"""
+        if self._periodic_task:
+            self._periodic_task.cancel()
+            
+        if self._transport:
+            await self._transport.close()
         
-    def _handle_periodic(self, notif):
-        """
-        Handle periodic notification
-        
-        Args:
-            notif: Periodic notification to send
-        """
-        notif_bytes = notif.SerializeToString()
-        self._binding.send_msg(self._to_id, notif_bytes)
+        logger.info("Agent stopped")

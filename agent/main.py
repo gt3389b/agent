@@ -80,13 +80,16 @@ class Agent:
         prometheus_client.start_http_server(9001)
 
         if client_type == "uds":
+            import asyncio
             logging.info("#######################################################")
             logging.info("## Starting a UDS USP Agent                          ##")
             logging.info("#######################################################")
 
-            my_uds_agent = uds_agent.UdsAgent(dm_file_name, db_file_name, net_intf, cfg_file_name, debug)
-            my_uds_agent.start_listening()
-            my_uds_agent.clean_up()
+            async def run_uds_agent():
+                my_uds_agent = uds_agent.UdsAgent(dm_file_name, db_file_name, net_intf, cfg_file_name, debug)
+                await my_uds_agent.start()
+            
+            asyncio.run(run_uds_agent())
         elif use_coap:
             logging.info("#######################################################")
             logging.info("## Starting a CoAP USP Agent                         ##")

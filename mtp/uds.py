@@ -19,241 +19,170 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-# File Name: uds.py
+# File Name: uds_async.py
 #
-# Description: Unix Domain Socket (UDS) MTP implementation for USP
+# Description: Async Unix Domain Socket transport for USP
 #
-# Functionality:
-#   Class: UdsTransport
-#     - Server and client socket handling
-#     - Message framing with length prefix
-#     - Thread-safe send/receive operations
 """
 
 import os
-import socket
-import struct
+import asyncio
 import logging
-import threading
-
+import struct
 
 logger = logging.getLogger(__name__)
 
+# Maximum message size (64KB)
+MAX_MESSAGE_SIZE = 65536
+
 
 class UdsTransport:
-    """Unix Domain Socket transport for USP messages"""
-    
-    # Message framing: 4-byte length prefix (big-endian)
-    HEADER_FORMAT = '!I'  # Network byte order, unsigned int (4 bytes)
-    HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
-    MAX_MESSAGE_SIZE = 65536  # 64KB max message size
+    """Async Unix Domain Socket transport with 4-byte length prefix framing"""
     
     def __init__(self, socket_path, mode='listen'):
         """
         Initialize UDS transport
         
         Args:
-            socket_path (str): Path to Unix socket file
-            mode (str): 'listen' for server, 'connect' for client
+            socket_path (str): Path to Unix socket
+            mode (str): 'listen' or 'connect'
         """
-        self._socket_path = socket_path
-        self._mode = mode
-        self._socket = None
-        self._conn_socket = None  # For accepted connections in listen mode
-        self._lock = threading.Lock()
-        self._connected = False
+        self.socket_path = socket_path
+        self.mode = mode
+        self.server = None
+        self.reader = None
+        self.writer = None
         
-    def start(self):
-        """Start the UDS transport"""
-        if self._mode == 'listen':
-            self._start_server()
-        else:
-            self._start_client()
-            
-    def _start_server(self):
-        """Start UDS server (listen mode)"""
-        # Remove existing socket file if it exists
-        if os.path.exists(self._socket_path):
-            os.unlink(self._socket_path)
-            logger.info(f"Removed existing socket file: {self._socket_path}")
-        
-        # Create Unix socket
-        self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self._socket.bind(self._socket_path)
-        self._socket.listen(1)  # Single connection for now
-        
-        logger.info(f"UDS server listening on: {self._socket_path}")
-        
-        # Set appropriate permissions
-        os.chmod(self._socket_path, 0o666)
-        
-    def _start_client(self):
-        """Start UDS client (connect mode)"""
-        self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        
-        # Try to connect
-        try:
-            self._socket.connect(self._socket_path)
-            self._conn_socket = self._socket
-            self._connected = True
-            logger.info(f"UDS client connected to: {self._socket_path}")
-        except (FileNotFoundError, ConnectionRefusedError) as e:
-            logger.error(f"Failed to connect to {self._socket_path}: {e}")
-            raise
-            
-    def accept_connection(self, timeout=None):
+    async def start_server(self, message_callback):
         """
-        Accept a connection (server mode only)
+        Start listening for connections (server mode)
         
         Args:
-            timeout (float): Timeout in seconds
-            
-        Returns:
-            bool: True if connection accepted, False on timeout
+            message_callback: Async callback function(data) for received messages
         """
-        if self._mode != 'listen':
-            raise RuntimeError("accept_connection only valid in listen mode")
+        if self.mode != 'listen':
+            raise ValueError("start_server() only valid in listen mode")
+        
+        # Remove old socket if exists
+        if os.path.exists(self.socket_path):
+            os.unlink(self.socket_path)
+        
+        async def handle_client(reader, writer):
+            """Handle individual client connection"""
+            addr = writer.get_extra_info('peername')
+            logger.info(f"UDS connection accepted from {addr}")
             
-        if self._socket is None:
-            raise RuntimeError("Server not started")
-        
-        # Set timeout
-        self._socket.settimeout(timeout)
-        
-        try:
-            self._conn_socket, _ = self._socket.accept()
-            self._connected = True
-            logger.info("UDS connection accepted")
-            return True
-        except socket.timeout:
-            return False
-            
-    def is_connected(self):
-        """Check if transport is connected"""
-        return self._connected
-        
-    def send_message(self, data):
-        """
-        Send a message with length-prefix framing
-        
-        Args:
-            data (bytes): Message data to send
-            
-        Raises:
-            RuntimeError: If not connected
-            ValueError: If message too large
-        """
-        if not self._connected or self._conn_socket is None:
-            raise RuntimeError("Not connected")
-            
-        msg_len = len(data)
-        if msg_len > self.MAX_MESSAGE_SIZE:
-            raise ValueError(f"Message too large: {msg_len} > {self.MAX_MESSAGE_SIZE}")
-        
-        # Create length header
-        header = struct.pack(self.HEADER_FORMAT, msg_len)
-        
-        with self._lock:
             try:
-                # Send header + data
-                self._conn_socket.sendall(header + data)
-                logger.debug(f"Sent UDS message: {msg_len} bytes")
-            except (BrokenPipeError, ConnectionResetError) as e:
-                logger.error(f"Failed to send message: {e}")
-                self._connected = False
-                raise
-                
-    def receive_message(self, timeout=None):
+                while True:
+                    # Read 4-byte length prefix
+                    length_data = await reader.readexactly(4)
+                    msg_length = struct.unpack('!I', length_data)[0]
+                    
+                    if msg_length > MAX_MESSAGE_SIZE:
+                        logger.error(f"Message too large: {msg_length} bytes")
+                        break
+                    
+                    # Read message payload
+                    data = await reader.readexactly(msg_length)
+                    logger.debug(f"Received {len(data)} bytes")
+                    
+                    # Process message
+                    await message_callback(data, writer)
+                    
+            except asyncio.IncompleteReadError:
+                logger.debug("Connection closed by peer")
+            except Exception as e:
+                logger.error(f"Error handling client: {e}", exc_info=True)
+            finally:
+                writer.close()
+                await writer.wait_closed()
+        
+        # Start Unix socket server
+        self.server = await asyncio.start_unix_server(
+            handle_client,
+            path=self.socket_path
+        )
+        
+        logger.info(f"UDS server listening on: {self.socket_path}")
+        
+    async def connect(self):
+        """Connect to UDS server (client mode)"""
+        if self.mode != 'connect':
+            raise ValueError("connect() only valid in connect mode")
+        
+        self.reader, self.writer = await asyncio.open_unix_connection(
+            path=self.socket_path
+        )
+        logger.info(f"Connected to UDS server: {self.socket_path}")
+        
+    async def send_message(self, data, writer=None):
         """
-        Receive a message with length-prefix framing
+        Send message with length prefix
         
         Args:
-            timeout (float): Timeout in seconds
+            data (bytes): Message to send
+            writer: StreamWriter (if None, uses self.writer)
+        """
+        target_writer = writer or self.writer
+        
+        if not target_writer:
+            raise RuntimeError("No connection available")
+        
+        # Prepare message with 4-byte length prefix
+        msg_length = len(data)
+        length_prefix = struct.pack('!I', msg_length)
+        
+        # Send length + data
+        target_writer.write(length_prefix + data)
+        await target_writer.drain()
+        
+        logger.debug(f"Sent {msg_length} bytes")
+    
+    async def receive_message(self, reader=None):
+        """
+        Receive message with length prefix
+        
+        Args:
+            reader: StreamReader (if None, uses self.reader)
             
         Returns:
-            bytes: Received message data, or None on timeout/error
+            bytes: Received message data
         """
-        if not self._connected or self._conn_socket is None:
-            return None
-            
-        # Set timeout
-        self._conn_socket.settimeout(timeout)
+        target_reader = reader or self.reader
+        
+        if not target_reader:
+            raise RuntimeError("No connection available")
         
         try:
-            # Read header (4 bytes)
-            header_data = self._recv_exact(self.HEADER_SIZE)
-            if not header_data:
-                return None
-                
-            # Unpack message length
-            msg_len, = struct.unpack(self.HEADER_FORMAT, header_data)
+            # Read 4-byte length prefix
+            length_data = await target_reader.readexactly(4)
+            msg_length = struct.unpack('!I', length_data)[0]
             
-            if msg_len > self.MAX_MESSAGE_SIZE:
-                logger.error(f"Message too large: {msg_len} > {self.MAX_MESSAGE_SIZE}")
-                self._connected = False
-                return None
+            if msg_length > MAX_MESSAGE_SIZE:
+                raise ValueError(f"Message too large: {msg_length} bytes")
             
             # Read message data
-            msg_data = self._recv_exact(msg_len)
-            if not msg_data:
-                return None
-                
-            logger.debug(f"Received UDS message: {msg_len} bytes")
-            return msg_data
+            data = await target_reader.readexactly(msg_length)
+            logger.debug(f"Received {msg_length} bytes")
             
-        except socket.timeout:
+            return data
+            
+        except asyncio.IncompleteReadError:
+            logger.debug("Connection closed by peer")
             return None
-        except (ConnectionResetError, BrokenPipeError) as e:
-            logger.error(f"Connection error while receiving: {e}")
-            self._connected = False
-            return None
+        
+    async def close(self):
+        """Close connection and clean up"""
+        if self.writer:
+            self.writer.close()
+            await self.writer.wait_closed()
             
-    def _recv_exact(self, num_bytes):
-        """
-        Receive exactly num_bytes from socket
-        
-        Args:
-            num_bytes (int): Number of bytes to receive
+        if self.server:
+            self.server.close()
+            await self.server.wait_closed()
             
-        Returns:
-            bytes: Received data, or None if connection closed
-        """
-        data = b''
-        while len(data) < num_bytes:
-            chunk = self._conn_socket.recv(num_bytes - len(data))
-            if not chunk:
-                logger.warning("Connection closed while receiving")
-                self._connected = False
-                return None
-            data += chunk
-        return data
+        if os.path.exists(self.socket_path) and self.mode == 'listen':
+            os.unlink(self.socket_path)
+            logger.info(f"Removed socket file: {self.socket_path}")
         
-    def close(self):
-        """Close the transport and clean up"""
-        logger.info("Closing UDS transport")
-        
-        self._connected = False
-        
-        # Close connection socket
-        if self._conn_socket:
-            try:
-                self._conn_socket.close()
-            except Exception as e:
-                logger.error(f"Error closing connection socket: {e}")
-            self._conn_socket = None
-        
-        # Close listening socket
-        if self._socket:
-            try:
-                self._socket.close()
-            except Exception as e:
-                logger.error(f"Error closing socket: {e}")
-            self._socket = None
-        
-        # Remove socket file (server mode only)
-        if self._mode == 'listen' and os.path.exists(self._socket_path):
-            try:
-                os.unlink(self._socket_path)
-                logger.info(f"Removed socket file: {self._socket_path}")
-            except Exception as e:
-                logger.error(f"Error removing socket file: {e}")
+        logger.info("UDS transport closed")
