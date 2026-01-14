@@ -42,8 +42,7 @@ logger = logging.getLogger(__name__)
 class UdsAgent(abstract_agent.AbstractAgent):
     """UDS-based USP Agent"""
     
-    def __init__(self, dm_file, db_file, net_intf, socket_path, 
-                 mode='listen', cfg_file_name='cfg/agent.json', debug=False):
+    def __init__(self, dm_file, db_file, net_intf, cfg_file_name='cfg/agent.json', debug=False):
         """
         Initialize UDS Agent
         
@@ -51,19 +50,47 @@ class UdsAgent(abstract_agent.AbstractAgent):
             dm_file (str): Data model file path
             db_file (str): Database file path
             net_intf (str): Network interface (unused for UDS)
-            socket_path (str): Unix socket path
-            mode (str): 'listen' or 'connect'
             cfg_file_name (str): Configuration file path
             debug (bool): Enable debug logging
         """
         super().__init__(dm_file, db_file, net_intf, cfg_file_name, debug)
         
-        self._socket_path = socket_path
-        self._mode = mode
         self._binding = None
         
         # Get agent endpoint ID from database
         self._agent_id = self._db.get("Device.LocalAgent.EndpointID")
+        
+        # Read UDS configuration from database
+        # Device.LocalAgent.MTP.1.UDS.UnixSocketPath
+        mtp_instances = self._db.find_instances("Device.LocalAgent.MTP.")
+        
+        socket_path = None
+        mode = "listen"  # Default mode
+        
+        for mtp_path in mtp_instances:
+            if self._db.get(mtp_path + "Enable"):
+                protocol = self._db.get(mtp_path + "Protocol")
+                if protocol == "UDS":
+                    socket_path = self._db.get(mtp_path + "UDS.UnixSocketPath")
+                    logger.info(f"Found UDS MTP: socket={socket_path}")
+                    break
+        
+        if not socket_path:
+            raise ValueError("No enabled UDS MTP found in database")
+        
+        # Try to get mode from Device.UDS.UnixSocket table if it exists
+        try:
+            uds_socket_instances = self._db.find_instances("Device.UDS.UnixSocket.")
+            for socket_inst_path in uds_socket_instances:
+                inst_path = self._db.get(socket_inst_path + "Path")
+                if inst_path == socket_path:
+                    mode_val = self._db.get(socket_inst_path + "Mode")
+                    if mode_val:
+                        mode = mode_val.lower()
+                    break
+        except Exception:
+            # If UDS.UnixSocket table doesn't exist, use default
+            pass
         
         logger.info(f"UDS Agent initialized: {self._agent_id}")
         logger.info(f"  Socket: {socket_path} (mode={mode})")
@@ -120,15 +147,23 @@ class UdsAgent(abstract_agent.AbstractAgent):
             param_path, self._binding
         )
         
-    def start_listening(self):
+    def start_listening(self, timeout=15):
         """Start listening for UDS messages"""
         logger.info("Starting UDS agent listening")
+        
+        # Start parent's message processing
+        super().start_listening()
         
         # Start binding
         self._binding.start_listening()
         
-        # Start processing messages
-        super().start_listening()
+        # Create and start binding listener
+        msg_handler = self.get_msg_handler()
+        listener = abstract_agent.BindingListener("uds-binding", self._binding, msg_handler, timeout)
+        listener.start()
+        
+        # Wait for listener to complete
+        listener.join()
         
     def clean_up(self):
         """Clean up UDS agent resources"""
@@ -137,9 +172,6 @@ class UdsAgent(abstract_agent.AbstractAgent):
         # Clean up binding
         if self._binding:
             self._binding.clean_up()
-        
-        # Parent cleanup
-        super().clean_up()
 
 
 class UdsNotificationSender(abstract_agent.NotificationSender):
