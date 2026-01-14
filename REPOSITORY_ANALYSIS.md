@@ -52,6 +52,7 @@ Protocol Buffer based messaging:
 #### 3. MTP Module (`mtp/`)
 Message Transport Protocol abstractions:
 - `coap.py` / `coap_usp_binding.py` - CoAP transport
+- `uds.py` - **NEW** Unix Domain Socket transport (TR-369 v1.4)
 - `generic_usp_binding.py` - Generic binding interface
 - `direct.py` - Direct communication (testing)
 - `log.py` - MTP logging
@@ -66,8 +67,9 @@ Controller/device manager implementation:
 
 #### 5. Schema Module (`schema/`)
 Protocol Buffer definitions:
-- `usp-msg.proto` - USP message schema (WT-369)
-- `usp-record.proto` - USP record schema
+- `usp-msg-1-4.proto` - USP message schema (TR-369 v1.4.2)
+- `usp-record-1-4.proto` - USP record schema (TR-369 v1.4.2)
+- `usp-msg.proto` / `usp-record.proto` - Legacy schemas (WT-369 Draft 1)
 
 ---
 
@@ -76,13 +78,15 @@ Protocol Buffer definitions:
 ### Protocol Support
 - ✅ **STOMP Binding** - STOMP 1.1/1.2 message transport
 - ✅ **CoAP Binding** - Constrained Application Protocol transport
-- ✅ **Protocol Buffers** - Efficient message serialization
+- ✅ **UDS Binding** - **NEW** Unix Domain Socket transport (TR-369 v1.4)
+- ✅ **Protocol Buffers** - Efficient message serialization (protobuf v6.33.4)
 
 ### Device Types
 Configurable via `-t` parameter:
 - **test** - Generic test agent
 - **camera** - Camera device with web UI
 - **motion** - Motion detection sensor
+- **uds** - **NEW** Unix Domain Socket-based agent
 
 ### USP Operations
 - **Get** - Retrieve parameter values

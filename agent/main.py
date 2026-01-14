@@ -38,6 +38,7 @@ import prometheus_client
 
 from agent import coap_agent
 from agent import stomp_agent
+from agent import uds_agent
 
 
 
@@ -59,6 +60,14 @@ class Agent:
         parser.add_argument("--coap-port", action="store", nargs="?",
                             type=int, default=5683,
                             help="specify the CoAP Port to listen on")
+        parser.add_argument("--uds", action="store_true",
+                            help="use the UDS (Unix Domain Socket) Binding")
+        parser.add_argument("--uds-path", action="store", nargs="?",
+                            type=str, default="/tmp/usp-agent.sock",
+                            help="specify the Unix socket path")
+        parser.add_argument("--uds-mode", action="store", nargs="?",
+                            type=str, default="listen",
+                            help="UDS mode: 'listen' (server) or 'connect' (client)")
         parser.add_argument("--intf", action="store", nargs="?",
                             type=str, default="",
                             help="specify the network interface to use")
@@ -72,6 +81,9 @@ class Agent:
         client_type = args.client_type
         use_coap = args.coap
         coap_port = args.coap_port
+        use_uds = args.uds
+        uds_path = args.uds_path
+        uds_mode = args.uds_mode
         net_intf = args.intf
 
         dm_file_name = "database/{}-dm.json".format(client_type)
@@ -79,7 +91,16 @@ class Agent:
 
         prometheus_client.start_http_server(9001)
 
-        if use_coap:
+        if use_uds:
+            logging.info("#######################################################")
+            logging.info("## Starting a UDS USP Agent                          ##")
+            logging.info(f"## Socket: {uds_path} (mode={uds_mode})")
+            logging.info("#######################################################")
+
+            my_uds_agent = uds_agent.UdsAgent(db_file_name, dm_file_name, uds_path, uds_mode, cfg_file_name, debug)
+            my_uds_agent.start_listening()
+            my_uds_agent.clean_up()
+        elif use_coap:
             logging.info("#######################################################")
             logging.info("## Starting a CoAP USP Agent                         ##")
             logging.info("#######################################################")

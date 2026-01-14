@@ -4,6 +4,55 @@
 
 ---
 
+## Completed Items
+
+### ✅ ~~TODO-002: Update Python Dependencies~~ (COMPLETED)
+**Status**: ✅ **COMPLETED** - January 14, 2026
+- Updated all dependencies to 2024+ versions
+- Removed 5 obsolete packages (six, enum-compat, cov-core, nose2-cov, LinkHeader)
+- All 80 tests passing with new dependencies
+- Updated: aiocoap, bottle, stomp.py, zeroconf, prometheus-client, protobuf
+
+### ✅ ~~TODO-019: Update USP Protocol Specification~~ (COMPLETED)
+**Status**: ✅ **COMPLETED** - January 14, 2026
+- Upgraded from WT-369 Draft 1 (June 2017, expired) to TR-369 v1.4.2 (July 2025)
+- Downloaded official schemas from BroadbandForum/usp GitHub v1.4.2 tag
+- Regenerated protobuf files with protoc 33.0
+- All 80 tests passing with new protocol
+
+### ✅ ~~TODO-021: Implement UDS MTP Support~~ (COMPLETED)
+**Status**: ✅ **COMPLETED** - January 14, 2026  
+**Issue**: TR-369 v1.4 introduces Unix Domain Socket (UDS) MTP, not present in original draft spec
+
+**Implementation**:
+- **Created Files**:
+  - `database/uds-db.json`: UDS agent database configuration
+  - `database/uds-dm.json`: UDS data model with permissions
+  - `mtp/uds.py`: UDS transport layer (242 lines)
+    - Message framing with 4-byte length prefix (network byte order)
+    - Listen/connect modes for server/client operation
+    - Thread-safe send/receive with connection management
+    - MAX_MESSAGE_SIZE=65536 bytes
+  - `agent/uds_usp_binding.py`: UDS USP binding (211 lines)
+    - Extends GenericUspBinding
+    - USP Record serialization/deserialization
+    - Receiver thread with reconnection logic
+    - Handles both no_session_context and session_context
+  - `agent/uds_agent.py`: UDS agent implementation (193 lines)
+    - Extends AbstractAgent
+    - UdsNotificationSender for outbound notifications
+    - UdsPeriodicNotifHandler for subscription support
+  - `tests/test_uds_usp_binding.py`: Unit tests (10 test cases)
+
+- **Modified Files**:
+  - `agent/main.py`: Added --uds, --uds-path, --uds-mode CLI arguments
+
+- **Test Results**:
+  - All 90 tests passing (80 original + 10 new UDS tests)
+  - Full backward compatibility maintained
+
+---
+
 ## Table of Contents
 1. [Critical Security & Infrastructure](#critical-security--infrastructure)
 2. [Code TODOs from Source](#code-todos-from-source)

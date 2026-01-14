@@ -1,0 +1,52 @@
+................................................................................
+----------------------------------------------------------------------
+Ran 80 tests in 0.152s
+
+OK
+Name                                Stmts   Miss  Cover
+-------------------------------------------------------
+agent/__init__.py                       0      0   100%
+agent/abstract_agent.py               297    297     0%
+agent/agent_db.py                     259     16    94%
+agent/camera.py                        72     72     0%
+agent/camera_ui.py                     44     44     0%
+agent/coap_agent.py                   136    136     0%
+agent/coap_usp_binding.py             152    152     0%
+agent/generic_usp_binding.py           55      9    84%
+agent/main.py                          43     43     0%
+agent/mdns.py                          81     81     0%
+agent/motion.py                        44     44     0%
+agent/notify.py                        73     73     0%
+agent/request_handler.py              337    258    23%
+agent/stomp_agent.py                  176    176     0%
+agent/stomp_usp_binding.py             66     66     0%
+agent/usp_msg_pb2.py                  187    175     6%
+agent/usp_record_pb2.py                23     11    52%
+agent/utils.py                        107     42    61%
+controller/__init__.py                  0      0   100%
+controller/devicemanager.py            45     45     0%
+controller/main.py                     72     72     0%
+controller/mdns.py                     28     28     0%
+controller/response_handler.py         95     95     0%
+controller/utils.py                   107    107     0%
+message/__init__.py                    73     73     0%
+message/message.py                    163    163     0%
+message/usp_msg_pb2.py                430    430     0%
+message/usp_record_pb2.py              36     36     0%
+message/utils.py                      107    107     0%
+mtp/__init__.py                         0      0   100%
+mtp/coap.py                           105    105     0%
+mtp/coap_usp_binding.py               148    148     0%
+mtp/direct.py                           5      5     0%
+mtp/generic_usp_binding.py             55     55     0%
+mtp/log.py                              8      8     0%
+mtp/mtp.py                              5      5     0%
+tests/__init__.py                       0      0   100%
+tests/test_agent_db.py                637     17    97%
+tests/test_config_mgr.py               49      1    98%
+tests/test_generic_usp_binding.py     100      0   100%
+tests/test_path_helper.py              62      0   100%
+tests/test_request_handler.py         121      0   100%
+-------------------------------------------------------
+TOTAL                                4603   3195    31%
+
