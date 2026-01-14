@@ -14,8 +14,11 @@ test-verbose:
 	nose2 -v --with-coverage
 
 schema:
-	protoc --proto_path=schema --python_out=agent schema/usp-msg.proto
-	protoc --proto_path=schema --python_out=agent schema/usp-record.proto
+	protoc --proto_path=schema --python_out=agent schema/usp-msg-1-4.proto
+	protoc --proto_path=schema --python_out=agent schema/usp-record-1-4.proto
+	@echo "Moving generated files to standard names..."
+	@mv agent/usp_msg_1_4_pb2.py agent/usp_msg_pb2.py 2>/dev/null || true
+	@mv agent/usp_record_1_4_pb2.py agent/usp_record_pb2.py 2>/dev/null || true
 
 lint:
 	find agent -name "*.py" | egrep -v 'pb2' | xargs pylint || :

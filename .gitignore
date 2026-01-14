@@ -9,6 +9,8 @@ tests/__pycache__/
 # Ignore IDE files
 .idea/
 
+venv/
+
 # Ignore distribution files
 dist/
 build/
