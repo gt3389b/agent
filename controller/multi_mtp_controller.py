@@ -70,23 +70,26 @@ class MultiMtpController:
         self._endpoint_id = self._config['endpoint_id']
         
         # UDS configuration
-        self._uds_socket_path = self._config.get('uds_socket_path')
-        self._uds_mode = self._config.get('uds_mode', 'listen')
+        uds_config = self._config.get('uds', {})
+        self._uds_socket_path = uds_config.get('socket_path')
+        self._uds_mode = uds_config.get('mode', 'listen')
         self._uds_transport = None
         
         # CoAP configuration
-        self._coap_host = self._config.get('coap_host', 'localhost')
-        self._coap_port = self._config.get('coap_port', 5683)
-        self._coap_path = self._config.get('coap_path', 'usp')
+        coap_config = self._config.get('coap', {})
+        self._coap_host = coap_config.get('host', 'localhost')
+        self._coap_port = coap_config.get('port', 5683)
+        self._coap_path = coap_config.get('path', 'usp')
         self._coap_binding = None
         self._coap_context = None
         
         # STOMP configuration
-        self._stomp_enabled = self._config.get('stomp_enabled', False)
-        self._stomp_host = self._config.get('stomp_host', 'localhost')
-        self._stomp_port = self._config.get('stomp_port', 61613)
-        self._stomp_controller_queue = self._config.get('stomp_controller_queue', '/queue/usp-controller')
-        self._stomp_agent_queue = self._config.get('stomp_agent_queue', '/queue/usp-agent')
+        stomp_config = self._config.get('stomp', {})
+        self._stomp_enabled = stomp_config.get('enabled', False)
+        self._stomp_host = stomp_config.get('host', 'localhost')
+        self._stomp_port = stomp_config.get('port', 61613)
+        self._stomp_controller_queue = stomp_config.get('controller_queue', '/queue/usp-controller')
+        self._stomp_agent_queue = stomp_config.get('agent_queue', '/queue/usp-agent')
         self._stomp_connection = None
         self._stomp_connected = False
         self._stomp_message_queue = asyncio.Queue()

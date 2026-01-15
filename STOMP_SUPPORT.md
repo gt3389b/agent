@@ -42,7 +42,25 @@ Edit `cfg/multi-controller.json`:
   "stomp_host": "localhost",
   "stomp_port": 61613,
   "stomp_controller_queue": "/queue/usp-controller",
-  "stomp_agent_queue": "/queue/usp-agent"
+```json
+{
+  "endpoint_id": "proto::controller-01",
+  "uds": {
+    "socket_path": "/tmp/usp-controller.sock",
+    "mode": "listen"
+  },
+  "coap": {
+    "host": "localhost",
+    "port": 5683,
+    "path": "usp"
+  },
+  "stomp": {
+    "enabled": true,
+    "host": "localhost",
+    "port": 61613,
+    "controller_queue": "/queue/usp-controller",
+    "agent_queue": "/queue/usp-agent"
+  }
 }
 ```
 
@@ -50,11 +68,11 @@ Edit `cfg/multi-controller.json`:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `stomp_enabled` | `false` | Enable/disable STOMP transport |
-| `stomp_host` | `localhost` | STOMP broker hostname |
-| `stomp_port` | `61613` | STOMP broker port (default for STOMP 1.0) |
-| `stomp_controller_queue` | `/queue/usp-controller` | Queue for controller to receive messages |
-| `stomp_agent_queue` | `/queue/usp-agent` | Queue for agents to receive messages |
+| `stomp.enabled` | `false` | Enable/disable STOMP transport |
+| `stomp.host` | `localhost` | STOMP broker hostname |
+| `stomp.port` | `61613` | STOMP broker port (default for STOMP 1.0) |
+| `stomp.controller_queue` | `/queue/usp-controller` | Queue for controller to receive messages |
+| `stomp.agent_queue` | `/queue/usp-agent` | Queue for agents to receive messages |
 
 ## Running with STOMP
 
