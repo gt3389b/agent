@@ -224,12 +224,44 @@ class UdsAgent(BaseAgent):
             OperateResponse: Response with .output_args or .error
         """
         logger.info(f"Processing Operate request: {request.command}")
+        logger.info(f"  Input args: {request.input_args}")
         
-        # Stub - command execution not implemented yet
+        # Parse command path to extract object and command name
+        # Example: Device.Reboot() -> object=Device., command=Reboot
+        if request.command.endswith(')'):
+            command_path = request.command[:-2]  # Remove ()
+        else:
+            command_path = request.command
+        
+        parts = command_path.rsplit('.', 1)
+        if len(parts) == 2:
+            obj_path, cmd_name = parts
+            obj_path += '.'  # Add trailing dot back
+        else:
+            return OperateResponse(
+                msg_id=request.msg_id,
+                command=request.command,
+                error=(7004, f"Invalid command path: {request.command}")
+            )
+        
+        # Handle Device.Reboot()
+        if command_path == "Device.Reboot":
+            logger.info("Executing Device.Reboot() command...")
+            
+            # Schedule the reboot asynchronously (after sending response)
+            asyncio.create_task(self._perform_reboot())
+            
+            return OperateResponse(
+                msg_id=request.msg_id,
+                command=request.command,
+                output_args={}
+            )
+        
+        # Unknown command
         return OperateResponse(
             msg_id=request.msg_id,
             command=request.command,
-            error=(7004, "Command execution not implemented")
+            error=(7004, f"Command not supported: {request.command}")
         )
     
     async def on_get_supported_dm_request(self, request):
@@ -539,6 +571,48 @@ class UdsAgent(BaseAgent):
             
         except Exception as e:
             logger.error(f"Failed to send Periodic notification: {e}", exc_info=True)
+    
+    async def _perform_reboot(self):
+        """
+        Perform agent reboot - restart with fresh subscription handlers
+        
+        This simulates a device reboot by:
+        1. Stopping periodic tasks
+        2. Clearing subscription handlers
+        3. Re-initializing subscriptions (which will re-send Boot! events)
+        """
+        try:
+            logger.info("=" * 60)
+            logger.info("REBOOT: Agent restarting...")
+            logger.info("=" * 60)
+            
+            # Give response time to be sent
+            await asyncio.sleep(0.5)
+            
+            # Step 1: Cancel all periodic notification tasks
+            logger.info("REBOOT: Cancelling periodic tasks...")
+            for task in self._periodic_tasks:
+                task.cancel()
+            
+            # Wait for cancellation to complete
+            if self._periodic_tasks:
+                await asyncio.gather(*self._periodic_tasks, return_exceptions=True)
+            
+            # Step 2: Clear subscription handlers
+            self._periodic_tasks.clear()
+            self._subscription_handlers.clear()
+            logger.info("REBOOT: Cleared subscription handlers")
+            
+            # Step 3: Re-initialize subscriptions (this will re-send Boot! events)
+            logger.info("REBOOT: Re-initializing subscriptions...")
+            await self._init_subscriptions()
+            
+            logger.info("=" * 60)
+            logger.info("REBOOT: Agent restart complete!")
+            logger.info("=" * 60)
+            
+        except Exception as e:
+            logger.error(f"Error during reboot: {e}", exc_info=True)
     
     async def stop(self):
         """Stop the agent and clean up"""
