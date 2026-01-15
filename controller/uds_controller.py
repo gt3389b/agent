@@ -33,7 +33,7 @@ from datetime import datetime
 from mtp.uds import UdsTransport
 from message import usp_record_pb2
 from message import usp_msg_pb2
-from message import Set, Get
+from message import Set, Get, GetSupportedDM, GetInstances
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +174,9 @@ class UdsController:
                           f"Product={boot_params.get('product_class')}, "
                           f"Serial={boot_params.get('serial_number')}")
                 
+                # Query agent capabilities and instances
+                await self._query_agent_capabilities(record.from_id, record.to_id)
+                
                 # Send Set request to configure periodic heartbeat
                 await self._configure_periodic_heartbeat(record.from_id, record.to_id)
             elif event.event_name == "Periodic!":
@@ -218,6 +221,83 @@ class UdsController:
                 logger.warning(f"Failed to parse BootParameterMap: {e}")
         
         return boot_params
+    
+    async def _query_agent_capabilities(self, agent_id, controller_id):
+        """
+        Query agent for supported data model and instances after Boot!
+        
+        Args:
+            agent_id: Agent endpoint ID
+            controller_id: Controller endpoint ID
+        """
+        try:
+            logger.info("=" * 60)
+            logger.info("Querying agent capabilities...")
+            logger.info("=" * 60)
+            
+            agent_socket = "/tmp/usp-agent.sock"  # TODO: Get from database
+            
+            # 1. GetSupportedDM - Query top-level data model
+            logger.info("Sending GetSupportedDM request for Device.")
+            gsdm_msg = GetSupportedDM(
+                to_id=agent_id,
+                from_id=controller_id,
+                obj_paths=["Device."],
+                first_level_only=True,
+                return_commands=True,
+                return_events=True,
+                return_params=True
+            )
+            
+            await self._send_dm_request(gsdm_msg, 'GetSupportedDM', agent_socket)
+            
+            # 2. GetInstances - Query multi-instance objects
+            logger.info("Sending GetInstances request...")
+            gi_msg = GetInstances(
+                to_id=agent_id,
+                from_id=controller_id,
+                obj_paths=[
+                    "Device.LocalAgent.Controller.",
+                    "Device.LocalAgent.MTP.",
+                    "Device.LocalAgent.Subscription."
+                ],
+                first_level_only=False
+            )
+            
+            await self._send_dm_request(gi_msg, 'GetInstances', agent_socket)
+            
+            logger.info("✓ Agent capability queries sent")
+            logger.info("=" * 60)
+            
+        except Exception as e:
+            logger.error(f"Error querying agent capabilities: {e}", exc_info=True)
+    
+    async def _send_dm_request(self, request_msg, request_type, agent_socket):
+        """
+        Send GetSupportedDM or GetInstances request
+        
+        Args:
+            request_msg: GetSupportedDM or GetInstances message
+            request_type: Type of request
+            agent_socket: Path to agent socket
+        """
+        transport = None
+        try:
+            transport = UdsTransport(agent_socket, mode='connect')
+            await transport.connect()
+            request_record = request_msg.SerializeToString()
+            await transport.send_message(request_record)
+            
+            logger.info(f"✓ {request_type} request sent")
+            
+            # For now, we don't wait for response - agent will process async
+            # In production, you'd want to track these requests and handle responses
+            
+        except Exception as e:
+            logger.error(f"Error sending {request_type}: {e}", exc_info=True)
+        finally:
+            if transport:
+                await transport.close()
     
     async def _send_request_and_wait(self, request_msg, request_type, agent_socket="/tmp/usp-agent.sock"):
         """
@@ -372,7 +452,12 @@ class UdsController:
         """
         msg_id = msg.header.msg_id
         
-        if msg_id in self._pending_requests:
+        # Check response type and log appropriately
+        if msg.body.response.HasField('get_supported_dm_resp'):
+            await self._handle_get_supported_dm_response(msg)
+        elif msg.body.response.HasField('get_instances_resp'):
+            await self._handle_get_instances_response(msg)
+        elif msg_id in self._pending_requests:
             future = self._pending_requests[msg_id]
             
             # Parse response based on type
@@ -390,6 +475,71 @@ class UdsController:
                 future.set_result(result)
         else:
             logger.warning(f"Received response for unknown msg_id: {msg_id}")
+    
+    async def _handle_get_supported_dm_response(self, msg):
+        """
+        Handle GetSupportedDM response
+        
+        Args:
+            msg: USP Message with GetSupportedDMResp
+        """
+        gsdm_resp = msg.body.response.get_supported_dm_resp
+        
+        logger.info("=" * 60)
+        logger.info("GetSupportedDM Response:")
+        
+        for req_obj_result in gsdm_resp.req_obj_results:
+            logger.info(f"  Requested Object: {req_obj_result.req_obj_path}")
+            
+            if req_obj_result.err_code != 0:
+                logger.error(f"    Error {req_obj_result.err_code}: {req_obj_result.err_msg}")
+                continue
+            
+            logger.info(f"    Data Model URI: {req_obj_result.data_model_inst_uri}")
+            logger.info(f"    Supported Objects: {len(req_obj_result.supported_objs)}")
+            
+            # Log first few supported objects as examples
+            for i, obj in enumerate(req_obj_result.supported_objs[:5]):
+                logger.info(f"      {obj.supported_obj_path}")
+                logger.info(f"        Access: {obj.access}, Multi-instance: {obj.is_multi_instance}")
+                if obj.supported_params:
+                    logger.info(f"        Parameters: {len(obj.supported_params)}")
+                if obj.supported_commands:
+                    logger.info(f"        Commands: {len(obj.supported_commands)}")
+                if obj.supported_events:
+                    logger.info(f"        Events: {len(obj.supported_events)}")
+            
+            if len(req_obj_result.supported_objs) > 5:
+                logger.info(f"      ... and {len(req_obj_result.supported_objs) - 5} more")
+        
+        logger.info("=" * 60)
+    
+    async def _handle_get_instances_response(self, msg):
+        """
+        Handle GetInstances response
+        
+        Args:
+            msg: USP Message with GetInstancesResp
+        """
+        gi_resp = msg.body.response.get_instances_resp
+        
+        logger.info("=" * 60)
+        logger.info("GetInstances Response:")
+        
+        for req_path_result in gi_resp.req_path_results:
+            logger.info(f"  Requested Path: {req_path_result.requested_path}")
+            
+            if req_path_result.err_code != 0:
+                logger.error(f"    Error {req_path_result.err_code}: {req_path_result.err_msg}")
+                continue
+            
+            for curr_obj in req_path_result.curr_objs:
+                logger.info(f"    Instance: {curr_obj.instantiated_obj_path}")
+                if curr_obj.unique_keys:
+                    for key, value in curr_obj.unique_keys.items():
+                        logger.info(f"      {key} = {value}")
+        
+        logger.info("=" * 60)
     
     def _parse_get_response(self, msg):
         """Parse Get response into dict"""

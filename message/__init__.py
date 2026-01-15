@@ -79,6 +79,36 @@ class Set(Message):
 
         super().generate_record()
 
+class GetSupportedDM(Message):
+    """GetSupportedDM request message"""
+    def __init__(self, to_id, from_id, obj_paths, first_level_only=False, 
+                 return_commands=True, return_events=True, return_params=True):
+        super().__init__(to_id=to_id, from_id=from_id)
+        self.serialize(obj_paths, first_level_only, return_commands, return_events, return_params)
+    
+    def serialize(self, obj_paths, first_level_only, return_commands, return_events, return_params):
+        self._msg.header.msg_type = usp_msg.Header.GET_SUPPORTED_DM
+        self._msg.body.request.get_supported_dm.obj_paths.extend(obj_paths)
+        self._msg.body.request.get_supported_dm.first_level_only = first_level_only
+        self._msg.body.request.get_supported_dm.return_commands = return_commands
+        self._msg.body.request.get_supported_dm.return_events = return_events
+        self._msg.body.request.get_supported_dm.return_params = return_params
+        super().generate_record()
+
+
+class GetInstances(Message):
+    """GetInstances request message"""
+    def __init__(self, to_id, from_id, obj_paths, first_level_only=False):
+        super().__init__(to_id=to_id, from_id=from_id)
+        self.serialize(obj_paths, first_level_only)
+    
+    def serialize(self, obj_paths, first_level_only):
+        self._msg.header.msg_type = usp_msg.Header.GET_INSTANCES
+        self._msg.body.request.get_instances.obj_paths.extend(obj_paths)
+        self._msg.body.request.get_instances.first_level_only = first_level_only
+        super().generate_record()
+
+
 class ProtocolViolationError(Exception):
     """A USP Protocol Violation Error"""
     pass
