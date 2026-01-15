@@ -34,7 +34,6 @@ from abc import ABC, abstractmethod
 from message import usp_record_pb2, usp_msg_pb2
 from message.request import parse_request
 from message.response import parse_response
-from message import notify as notify_module
 
 logger = logging.getLogger(__name__)
 

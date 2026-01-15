@@ -34,9 +34,8 @@ SOFTWARE.
 import logging
 import sys
 import argparse
-import prometheus_client
+# import prometheus_client  # Disabled - not installed
 
-from agent import stomp_agent
 from agent import uds_agent
 
 
@@ -77,7 +76,7 @@ class Agent:
         dm_file_name = "database/{}-dm.json".format(client_type)
         db_file_name = "database/{}-db.json".format(client_type)
 
-        prometheus_client.start_http_server(9001)
+        # prometheus_client.start_http_server(9001)  # Disabled - not installed
 
         if client_type == "uds":
             import asyncio
@@ -106,6 +105,8 @@ class Agent:
             logging.info("## Starting a STOMP USP Agent                        ##")
             logging.info("#######################################################")
 
+            from agent import stomp_agent
+            
             my_stomp_agent = stomp_agent.StompAgent(dm_file_name, db_file_name, net_intf, cfg_file_name, debug)
             my_stomp_agent.start_listening()
             my_stomp_agent.clean_up()

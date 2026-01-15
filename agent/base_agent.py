@@ -60,15 +60,20 @@ class BaseAgent(ABC):
         self._current_writer = None  # Connection to send response on
         self._logger = logging.getLogger(self.__class__.__name__)
     
-    async def handle_incoming_request(self, request, writer):
+    async def handle_incoming_request(self, request, from_id, to_id, writer):
         """
         Handle incoming request (called by MTP layer)
         
         Args:
             request: Python request object
+            from_id (str): Controller endpoint ID
+            to_id (str): Agent endpoint ID (should match self.endpoint_id)
             writer: Stream writer for sending response
         """
         self._current_writer = writer
+        
+        # Store controller ID from request
+        controller_id = from_id
         
         try:
             # Dispatch to appropriate handler based on request type

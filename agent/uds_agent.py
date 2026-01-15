@@ -41,7 +41,7 @@ from message import usp_msg_pb2
 logger = logging.getLogger(__name__)
 
 
-class UdsAgentNew(BaseAgent):
+class UdsAgent(BaseAgent):
     """Async UDS-based USP Agent using new architecture"""
     
     def __init__(self, dm_file, db_file, cfg_file='cfg/agent.json'):
