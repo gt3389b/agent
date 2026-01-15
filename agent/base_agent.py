@@ -162,10 +162,13 @@ class BaseAgent(ABC):
         except Exception as e:
             self._logger.error(f"Failed to send Boot! notification: {e}", exc_info=True)
     
-    @abstractmethod
+    # ===== Default USP Request Handlers =====
+    # These provide standard implementations that work for most agents
+    # Agents can override these if they need custom behavior
+    
     async def on_get_request(self, request):
         """
-        Handle Get request
+        Handle Get request - Default implementation queries database
         
         Args:
             request (GetRequest): Request with .paths attribute
@@ -173,12 +176,25 @@ class BaseAgent(ABC):
         Returns:
             GetResponse: Response with .results dict {path: value}
         """
-        pass
+        from message.response import GetResponse
+        
+        self._logger.info(f"Processing Get request for {len(request.paths)} paths")
+        results = {}
+        
+        for path in request.paths:
+            try:
+                value = self._db.get(path)
+                results[path] = value
+                self._logger.debug(f"  {path} = {value}")
+            except Exception as e:
+                self._logger.warning(f"  {path} - error: {e}")
+                results[path] = {'error': (7004, f"Invalid parameter: {path}")}
+        
+        return GetResponse(msg_id=request.msg_id, results=results)
     
-    @abstractmethod
     async def on_set_request(self, request):
         """
-        Handle Set request
+        Handle Set request - Default implementation updates database
         
         Args:
             request (SetRequest): Request with .parameters dict
@@ -186,12 +202,26 @@ class BaseAgent(ABC):
         Returns:
             SetResponse: Response with .updated_params and .failed_params
         """
-        pass
+        from message.response import SetResponse
+        
+        self._logger.info(f"Processing Set request for {len(request.parameters)} parameters")
+        updated_params = {}
+        failed_params = {}
+        
+        for path, value in request.parameters.items():
+            try:
+                self._db.update(path, value)
+                updated_params[path] = value
+                self._logger.info(f"  ✓ {path} = {value}")
+            except Exception as e:
+                self._logger.warning(f"  ✗ {path} - error: {e}")
+                failed_params[path] = (7004, f"Failed to set {path}: {str(e)}")
+        
+        return SetResponse(msg_id=request.msg_id, updated_params=updated_params, failed_params=failed_params)
     
-    @abstractmethod
     async def on_operate_request(self, request):
         """
-        Handle Operate request
+        Handle Operate request - Default implementation returns not supported
         
         Args:
             request (OperateRequest): Request with .command and .input_args
@@ -199,12 +229,14 @@ class BaseAgent(ABC):
         Returns:
             OperateResponse: Response with .output_args or .error
         """
-        pass
+        from message.response import OperateResponse
+        
+        self._logger.info(f"Processing Operate request: {request.command}")
+        return OperateResponse(msg_id=request.msg_id, command=request.command, error=(7004, "Command not supported"))
     
-    @abstractmethod
     async def on_get_supported_dm_request(self, request):
         """
-        Handle GetSupportedDM request
+        Handle GetSupportedDM request - Default implementation uses data model
         
         Args:
             request (GetSupportedDMRequest): Request with .obj_paths
@@ -212,12 +244,40 @@ class BaseAgent(ABC):
         Returns:
             GetSupportedDMResponse: Response with .supported_objects dict
         """
-        pass
+        from message.response import GetSupportedDMResponse
+        
+        self._logger.info(f"Processing GetSupportedDM request for {request.obj_paths}")
+        objects = self._build_data_model_tree(self._data_model)
+        supported_objects = {}
+        
+        for req_path in request.obj_paths:
+            if not req_path.endswith('.'):
+                req_path += '.'
+            
+            obj_paths = [p for p in objects.keys() if p.startswith(req_path)]
+            self._logger.info(f"  Returning {len(obj_paths)} objects for {req_path}")
+            
+            for obj_path in obj_paths:
+                obj_data = objects.get(obj_path, {})
+                parameters = {}
+                if request.return_params:
+                    for param_name, access in obj_data.get('params', {}).items():
+                        parameters[param_name] = {
+                            'access': 'read-write' if access == 'readWrite' else 'read-only',
+                            'type': 'string'
+                        }
+                
+                supported_objects[obj_path] = {
+                    'access': 'read-only',
+                    'is_multi_instance': obj_data.get('is_multi_instance', False),
+                    'parameters': parameters
+                }
+        
+        return GetSupportedDMResponse(msg_id=request.msg_id, supported_objects=supported_objects)
     
-    @abstractmethod
     async def on_get_instances_request(self, request):
         """
-        Handle GetInstances request
+        Handle GetInstances request - Default implementation queries database
         
         Args:
             request (GetInstancesRequest): Request with .obj_paths
@@ -225,7 +285,21 @@ class BaseAgent(ABC):
         Returns:
             GetInstancesResponse: Response with .instances dict
         """
-        pass
+        from message.response import GetInstancesResponse
+        
+        self._logger.info(f"Processing GetInstances request for {request.obj_paths}")
+        instances = {}
+        
+        for obj_path in request.obj_paths:
+            try:
+                instance_paths = self._db.find_instances(obj_path)
+                instances[obj_path] = instance_paths
+                self._logger.info(f"  {obj_path}: {len(instance_paths)} instances")
+            except Exception as e:
+                self._logger.warning(f"  {obj_path} - error: {e}")
+                instances[obj_path] = []
+        
+        return GetInstancesResponse(msg_id=request.msg_id, instances=instances)
     
     async def respond(self, response, to_id):
         """
