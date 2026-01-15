@@ -767,14 +767,115 @@ class UdsController:
         
         Args:
             agent_id: Agent endpoint ID
-            command: Command path
-            args: Command arguments
+            command: Command path (e.g., "Device.Reboot()")
+            args: Command arguments (dict)
             
         Returns:
             dict: Operation result
         """
-        # TODO: Implement when Operate is needed
-        raise NotImplementedError("Operate command not yet implemented")
+        if agent_id not in self._connected_agents:
+            raise ValueError(f"Agent not connected: {agent_id}")
+        
+        agent_socket = self._connected_agents[agent_id]['socket_path']
+        msg_id = self._generate_msg_id()
+        
+        # Create Operate request
+        operate_msg = usp_msg_pb2.Msg()
+        operate_msg.header.msg_id = msg_id
+        operate_msg.header.msg_type = usp_msg_pb2.Header.OPERATE
+        
+        # Set command
+        operate_req = operate_msg.body.request.operate
+        operate_req.command = command
+        
+        # Set input arguments
+        for key, value in args.items():
+            operate_req.command_key = key
+            operate_req.input[key] = str(value)
+        
+        # Wrap in USP Record
+        record = usp_record_pb2.Record()
+        record.version = "1.0"
+        record.to_id = agent_id
+        record.from_id = self._endpoint_id
+        record.payload_security = usp_record_pb2.Record.PLAINTEXT
+        record.no_session_context.payload = operate_msg.SerializeToString()
+        
+        # Store pending request
+        future = asyncio.Future()
+        self._pending_requests[msg_id] = future
+        
+        # Send request
+        transport = UdsTransport(agent_socket, 'connect')
+        
+        try:
+            await transport.connect()
+            
+            request_record = record.SerializeToString()
+            await transport.send_message(request_record)
+            
+            logger.info(f"✓ Operate request sent: {command} (msg_id={msg_id})")
+            
+            # Wait for response on the same connection
+            response_data = await asyncio.wait_for(transport.receive_message(), timeout=10.0)
+            
+            if response_data:
+                # Parse response
+                resp_record = usp_record_pb2.Record()
+                resp_record.ParseFromString(response_data)
+                
+                resp_msg = usp_msg_pb2.Msg()
+                resp_msg.ParseFromString(resp_record.no_session_context.payload)
+                
+                # Parse and return result
+                result = self._parse_operate_response(resp_msg)
+                return result
+            else:
+                raise RuntimeError("No response received")
+            
+        except asyncio.TimeoutError:
+            raise TimeoutError("Operate request timed out")
+        finally:
+            if msg_id in self._pending_requests:
+                del self._pending_requests[msg_id]
+            await transport.close()
+    
+    def _parse_operate_response(self, msg):
+        """
+        Parse Operate response message
+        
+        Args:
+            msg: USP Msg protobuf
+            
+        Returns:
+            dict: Operation results
+        """
+        operate_resp = msg.body.response.operate_resp
+        
+        results = []
+        for op_result in operate_resp.operation_results:
+            if op_result.HasField('req_output_args'):
+                # Success
+                output = {}
+                for key, value in op_result.req_output_args.output_args.items():
+                    output[key] = value
+                
+                results.append({
+                    'success': True,
+                    'executed_command': op_result.executed_command,
+                    'output_args': output
+                })
+            elif op_result.HasField('req_obj_path'):
+                # Error
+                cmd_failure = op_result.req_obj_path.cmd_failure
+                results.append({
+                    'success': False,
+                    'command': op_result.req_obj_path.requested_path,
+                    'error_code': cmd_failure.err_code,
+                    'error_message': cmd_failure.err_msg
+                })
+        
+        return results
     
     def get_connected_agents(self):
         """

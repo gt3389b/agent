@@ -18,10 +18,19 @@ def main_uds(config_file):
     """Start UDS controller"""
     import asyncio
     from controller import uds_controller
+    from controller import northbound
     
     async def run_controller():
         controller = uds_controller.UdsController(config_file)
-        await controller.start()
+        
+        # Start northbound API
+        nb_api = northbound.ControllerNorthbound(controller)
+        
+        # Run both controller and northbound API concurrently
+        await asyncio.gather(
+            controller.start(),
+            nb_api.start()
+        )
     
     asyncio.run(run_controller())
 
