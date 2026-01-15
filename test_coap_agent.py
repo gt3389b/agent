@@ -14,7 +14,7 @@ logging.basicConfig(
 
 async def test_coap_registration():
     """Test that CoAP agent registers with Boot! notification"""
-    from controller.multi_mtp_controller import MultiMtpController
+    from controller.controller import Controller
     from agent.coap_agent_async import CoapAgent
     
     print("=" * 80)
@@ -22,7 +22,7 @@ async def test_coap_registration():
     print("=" * 80)
     
     # Start controller
-    controller = MultiMtpController('cfg/multi-controller.json')
+    controller = Controller('cfg/multi-controller.json')
     controller_task = asyncio.create_task(controller.start())
     
     # Wait for controller to be ready

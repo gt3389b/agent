@@ -46,19 +46,19 @@ from message import Set, Get, GetSupportedDM, GetInstances
 logger = logging.getLogger(__name__)
 
 
-class MultiMtpController:
+class Controller:
     """
-    Multi-MTP Controller supporting UDS, CoAP, and STOMP transports
+    Multi-MTP USP Controller supporting UDS, CoAP, and STOMP transports
     
     This controller:
-    - Listens on both UDS socket, CoAP port, and STOMP broker
+    - Listens on multiple transports (UDS socket, CoAP port, STOMP broker)
     - Tracks which MTP each agent uses
     - Routes requests/responses using the correct transport
     """
     
     def __init__(self, config_file):
         """
-        Initialize Multi-MTP Controller
+        Initialize USP Controller
         
         Args:
             config_file (str): Path to configuration file
@@ -114,7 +114,7 @@ class MultiMtpController:
         self._msg_id_counter = 0
         
         logger.info("=" * 60)
-        logger.info("Multi-MTP Controller Initialized")
+        logger.info("USP Controller Initialized")
         logger.info(f"  Endpoint ID: {self._endpoint_id}")
         if self._uds_enabled and self._uds_socket_path:
             logger.info(f"  UDS: {self._uds_socket_path} (mode={self._uds_mode})")
@@ -985,7 +985,7 @@ class MultiMtpController:
         if self._stomp_connection and self._stomp_connection.is_connected():
             self._stomp_connection.disconnect()
         
-        logger.info("Multi-MTP Controller stopped")
+        logger.info("USP Controller stopped")
 
 
 class CoapUspResource(resource.Resource):

@@ -20,10 +20,10 @@ agent_logger = logging.getLogger('AGENT')
 
 async def run_controller():
     """Run the multi-MTP controller"""
-    from controller.multi_mtp_controller import MultiMtpController
+    from controller.controller import Controller
     
     ctrl_logger.info("Starting Multi-MTP Controller...")
-    controller = MultiMtpController('cfg/multi-controller.json')
+    controller = Controller('cfg/multi-controller.json')
     
     try:
         await controller.start()
