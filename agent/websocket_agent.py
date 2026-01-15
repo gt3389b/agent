@@ -162,65 +162,13 @@ class WebSocketAgent(BaseAgent):
         
         logger.info("Agent connected and listening for controller messages...")
         
-        # Send Boot! notification
-        await self.send_boot_notification()
+        # Send Boot! notification (standardized in base class)
+        await self.on_connect()
         
         # Keep client running forever
         await asyncio.Future()
     
-    async def send_boot_notification(self):
-        """Send Boot! notification to controller"""
-        try:
-            logger.info(f"Sending Boot! notification to {self._controller_id}")
-            
-            # Create Boot notification
-            boot_notif = notify.BootNotification(
-                self.endpoint_id,
-                self._controller_id,
-                "sub-boot-websocket-ctrl-1",
-                self._db,
-                self._data_model
-            )
-            
-            # Generate notification message
-            notif_msg = boot_notif.generate_notif_msg()
-            
-            # Send via binding (client websocket)
-            await self.notify(notif_msg, self._controller_id, None)
-            
-            logger.info("✓ Boot! notification sent successfully")
-            
-        except Exception as e:
-            logger.error(f"Failed to send Boot! notification: {e}", exc_info=True)
-    
-    def _find_controller_url(self):
-        """Find controller WebSocket URL from database"""
-        try:
-            num_controllers = int(self._db.get("Device.LocalAgent.ControllerNumberOfEntries"))
-            
-            for i in range(1, num_controllers + 1):
-                ctrl_path = f"Device.LocalAgent.Controller.{i}."
-                self._controller_id = self._db.get(ctrl_path + "EndpointID")
-                
-                # Find MTP for this controller
-                num_mtps = int(self._db.get(ctrl_path + "MTPNumberOfEntries"))
-                
-                for j in range(1, num_mtps + 1):
-                    mtp_path = f"{ctrl_path}MTP.{j}."
-                    protocol = self._db.get(mtp_path + "Protocol")
-                    
-                    if protocol == "WebSocket":
-                        host = self._db.get(mtp_path + "WebSocket.Host")
-                        port = int(self._db.get(mtp_path + "WebSocket.Port"))
-                        path = self._db.get(mtp_path + "WebSocket.Path")
-                        
-                        return f"ws://{host}:{port}{path}"
-            
-            raise ValueError("No WebSocket MTP found for any controller")
-            
-        except Exception as e:
-            logger.error(f"Error finding controller WebSocket URL: {e}", exc_info=True)
-            raise
+    # Removed send_boot_notification() - now using BaseAgent.on_connect()
     
     async def _init_subscriptions(self):
         """Initialize subscriptions from database"""

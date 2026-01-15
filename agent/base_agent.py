@@ -56,9 +56,17 @@ class BaseAgent(ABC):
             endpoint_id (str): Agent's USP endpoint ID
         """
         self.endpoint_id = endpoint_id
-        self._mtp_binding = None  # Set by subclass
-        self._current_writer = None  # Connection to send response on
         self._logger = logging.getLogger(self.__class__.__name__)
+        
+        # These are set by subclass - don't overwrite if already set
+        if not hasattr(self, '_mtp_binding'):
+            self._mtp_binding = None
+        if not hasattr(self, '_db'):
+            self._db = None
+        if not hasattr(self, '_data_model'):
+            self._data_model = None
+        if not hasattr(self, '_current_writer'):
+            self._current_writer = None
     
     async def handle_incoming_request(self, request, from_id, to_id, writer):
         """
@@ -103,6 +111,56 @@ class BaseAgent(ABC):
                 await self._send_bytes(error_bytes, writer)
         finally:
             self._current_writer = None
+    
+    async def on_connect(self):
+        """
+        Called when agent is connected and ready - sends Boot! notification
+        This is MTP-agnostic and should be called by all agent implementations
+        after their transport is ready.
+        """
+        if not self._db:
+            self._logger.warning("Database not initialized, skipping Boot! notification")
+            return
+        
+        try:
+            from agent import notify
+            
+            # Get all enabled controllers
+            num_controllers = int(self._db.get("Device.LocalAgent.ControllerNumberOfEntries"))
+            
+            for i in range(1, num_controllers + 1):
+                ctrl_path = f"Device.LocalAgent.Controller.{i}."
+                
+                # Check if controller is enabled
+                try:
+                    enabled_val = self._db.get(ctrl_path + "Enable")
+                    enabled = enabled_val if isinstance(enabled_val, bool) else str(enabled_val).lower() == "true"
+                except:
+                    enabled = False
+                
+                if not enabled:
+                    continue
+                
+                controller_id = self._db.get(ctrl_path + "EndpointID")
+                
+                # Send Boot! notification to this controller
+                self._logger.info(f"Sending Boot! notification to {controller_id}")
+                
+                boot_notif = notify.BootNotification(
+                    self.endpoint_id,
+                    controller_id,
+                    "sub-boot-websocket-ctrl-1",  # Standard subscription ID
+                    self._db,
+                    self._data_model
+                )
+                
+                notif_msg = boot_notif.generate_notif_msg()
+                await self.notify(notif_msg, controller_id, None)
+                
+                self._logger.info(f"✓ Boot! notification sent to {controller_id}")
+                
+        except Exception as e:
+            self._logger.error(f"Failed to send Boot! notification: {e}", exc_info=True)
     
     @abstractmethod
     async def on_get_request(self, request):
