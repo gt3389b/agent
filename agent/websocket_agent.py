@@ -43,6 +43,13 @@ logger = logging.getLogger(__name__)
 class WebSocketAgent(BaseAgent):
     """Async WebSocket-based USP Agent"""
     
+    def _get_with_default(self, path, default=None):
+        """Get value from database with default fallback"""
+        try:
+            return self._db.get(path)
+        except:
+            return default
+    
     def __init__(self, dm_file, db_file, cfg_file='cfg/agent.json'):
         """
         Initialize Async WebSocket Agent
@@ -61,23 +68,16 @@ class WebSocketAgent(BaseAgent):
         # Initialize base agent
         super().__init__(agent_id)
         
-        # Find WebSocket MTP configuration
-        mtp_path, listen_host, listen_port, resource_path = self._find_websocket_mtp()
+        # Find controller WebSocket URL from database
+        controller_url = self._find_controller_url()
         
-        # Create WebSocket binding
-        self._mtp_binding = WebSocketUspBinding(
-            agent_id, 
-            listen_host=listen_host,
-            listen_port=listen_port,
-            resource_path=resource_path
-        )
+        # Create WebSocket binding in client mode
+        self._mtp_binding = WebSocketUspBinding(agent_id)
         
         logger.info(f"Async WebSocket Agent initialized: {agent_id}")
-        logger.info(f"  Listen: {listen_host}:{listen_port}{resource_path}")
+        logger.info(f"  Controller: {controller_url}")
         
-        self._listen_host = listen_host
-        self._listen_port = listen_port
-        self._resource_path = resource_path
+        self._controller_url = controller_url
         self._periodic_tasks = []  # List of periodic notification tasks
         self._subscription_handlers = {}  # Track active subscription handlers
         
@@ -85,8 +85,52 @@ class WebSocketAgent(BaseAgent):
         self._dm_file = dm_file
         self._data_model = self._load_data_model(dm_file)
         
+        # Set message callback for incoming controller requests
+        self._mtp_binding._message_callback = self.handle_incoming_request
+        
+    def _find_controller_url(self):
+        """Find controller WebSocket URL from database"""
+        try:
+            num_controllers = int(self._db.get("Device.LocalAgent.ControllerNumberOfEntries"))
+            
+            for i in range(1, num_controllers + 1):
+                ctrl_path = f"Device.LocalAgent.Controller.{i}."
+                enabled_val = self._get_with_default(ctrl_path + "Enable", False)
+                enabled = enabled_val if isinstance(enabled_val, bool) else str(enabled_val).lower() == "true"
+                
+                if not enabled:
+                    continue
+                    
+                self._controller_id = self._db.get(ctrl_path + "EndpointID")
+                
+                # Find MTP for this controller
+                num_mtps = int(self._db.get(ctrl_path + "MTPNumberOfEntries"))
+                
+                for j in range(1, num_mtps + 1):
+                    mtp_path = f"{ctrl_path}MTP.{j}."
+                    mtp_enabled_val = self._get_with_default(mtp_path + "Enable", False)
+                    mtp_enabled = mtp_enabled_val if isinstance(mtp_enabled_val, bool) else str(mtp_enabled_val).lower() == "true"
+                    
+                    if not mtp_enabled:
+                        continue
+                        
+                    protocol = self._db.get(mtp_path + "Protocol")
+                    
+                    if protocol == "WebSocket":
+                        host = self._db.get(mtp_path + "WebSocket.Host")
+                        port = int(self._db.get(mtp_path + "WebSocket.Port"))
+                        path = self._db.get(mtp_path + "WebSocket.Path")
+                        
+                        return f"ws://{host}:{port}{path}"
+            
+            raise ValueError("No enabled WebSocket MTP found for any enabled controller")
+            
+        except Exception as e:
+            logger.error(f"Error finding controller WebSocket URL: {e}", exc_info=True)
+            raise
+    
     def _find_websocket_mtp(self):
-        """Find WebSocket MTP configuration"""
+        """Find WebSocket MTP configuration (deprecated - agent runs in client mode)"""
         num_mtps = int(self._db.get("Device.LocalAgent.MTPNumberOfEntries"))
         
         for i in range(1, num_mtps + 1):
@@ -94,9 +138,9 @@ class WebSocketAgent(BaseAgent):
             protocol = self._db.get(mtp_path + "Protocol")
             
             if protocol == "WebSocket":
-                listen_host = self._db.get(mtp_path + "WebSocket.Host", default="localhost")
-                listen_port = int(self._db.get(mtp_path + "WebSocket.Port", default=8080))
-                resource_path = self._db.get(mtp_path + "WebSocket.Path", default="/usp")
+                listen_host = self._get_with_default(mtp_path + "WebSocket.Host", "localhost")
+                listen_port = int(self._get_with_default(mtp_path + "WebSocket.Port", 8080))
+                resource_path = self._get_with_default(mtp_path + "WebSocket.Path", "/usp")
                 
                 logger.info(f"Found WebSocket MTP: ws://{listen_host}:{listen_port}{resource_path}")
                 return mtp_path, listen_host, listen_port, resource_path
@@ -105,26 +149,29 @@ class WebSocketAgent(BaseAgent):
     
     async def start(self):
         """Start the async WebSocket agent"""
-        logger.info(f"Agent starting on ws://{self._listen_host}:{self._listen_port}{self._resource_path}")
+        # Find controller WebSocket URL
+        controller_url = self._find_controller_url()
+        
+        logger.info(f"Agent connecting to controller at {controller_url}")
+        
+        # Connect to controller as WebSocket client
+        await self._mtp_binding.connect(controller_url)
         
         # Initialize subscriptions and start handlers
         await self._init_subscriptions()
         
-        # Start listening for controller messages
-        await self._mtp_binding.start_server(self.handle_incoming_request)
+        logger.info("Agent connected and listening for controller messages...")
         
-        logger.info("Agent listening for controller messages...")
+        # Send Boot! notification
+        await self.send_boot_notification()
         
-        # Keep server running forever
+        # Keep client running forever
         await asyncio.Future()
     
     async def send_boot_notification(self):
         """Send Boot! notification to controller"""
         try:
-            # Find controller WebSocket URL
-            controller_url = self._find_controller_url()
-            
-            logger.info(f"Sending Boot! notification to {controller_url}")
+            logger.info(f"Sending Boot! notification to {self._controller_id}")
             
             # Create Boot notification
             boot_notif = notify.BootNotification(
@@ -138,11 +185,8 @@ class WebSocketAgent(BaseAgent):
             # Generate notification message
             notif_msg = boot_notif.generate_notif_msg()
             
-            # Connect to controller
-            await self._mtp_binding.connect(controller_url)
-            
-            # Send via binding
-            await self.notify(notif_msg, self._controller_id, controller_url)
+            # Send via binding (client websocket)
+            await self.notify(notif_msg, self._controller_id, None)
             
             logger.info("✓ Boot! notification sent successfully")
             
@@ -181,7 +225,7 @@ class WebSocketAgent(BaseAgent):
     async def _init_subscriptions(self):
         """Initialize subscriptions from database"""
         try:
-            num_subscriptions = int(self._db.get("Device.LocalAgent.SubscriptionNumberOfEntries", default=0))
+            num_subscriptions = int(self._get_with_default("Device.LocalAgent.SubscriptionNumberOfEntries", 0))
             
             logger.info(f"Initializing {num_subscriptions} subscriptions...")
             
@@ -189,7 +233,8 @@ class WebSocketAgent(BaseAgent):
                 sub_path = f"Device.LocalAgent.Subscription.{i}."
                 
                 # Check if subscription is enabled
-                enable = self._db.get(sub_path + "Enable", default="false").lower() == "true"
+                enable_val = self._get_with_default(sub_path + "Enable", False)
+                enable = enable_val if isinstance(enable_val, bool) else str(enable_val).lower() == "true"
                 
                 if not enable:
                     continue
@@ -216,7 +261,7 @@ class WebSocketAgent(BaseAgent):
         """Initialize a ValueChange subscription"""
         try:
             # Get reference list
-            num_refs = int(self._db.get(sub_path + "ReferenceListNumberOfEntries", default=0))
+            num_refs = int(self._get_with_default(sub_path + "ReferenceListNumberOfEntries", 0))
             
             for i in range(1, num_refs + 1):
                 param_path = self._db.get(f"{sub_path}ReferenceList.{i}.Parameter")
@@ -236,7 +281,7 @@ class WebSocketAgent(BaseAgent):
         """Initialize an Event subscription"""
         try:
             # Get reference list
-            num_refs = int(self._db.get(sub_path + "ReferenceListNumberOfEntries", default=0))
+            num_refs = int(self._get_with_default(sub_path + "ReferenceListNumberOfEntries", 0))
             
             for i in range(1, num_refs + 1):
                 obj_path = self._db.get(f"{sub_path}ReferenceList.{i}.Parameter")
@@ -301,6 +346,119 @@ class WebSocketAgent(BaseAgent):
         except Exception as e:
             logger.error(f"Error loading data model: {e}", exc_info=True)
             return {}
+    
+    # ===== BaseAgent callback implementations =====
+    
+    async def on_get_request(self, request):
+        """Handle Get request"""
+        from message.response import GetResponse
+        
+        logger.info(f"Processing Get request for {len(request.paths)} paths")
+        results = {}
+        
+        for path in request.paths:
+            try:
+                value = self._db.get(path)
+                results[path] = value
+                logger.debug(f"  {path} = {value}")
+            except Exception as e:
+                logger.warning(f"  {path} - error: {e}")
+                results[path] = {'error': (7004, f"Invalid parameter: {path}")}
+        
+        return GetResponse(msg_id=request.msg_id, results=results)
+    
+    async def on_set_request(self, request):
+        """Handle Set request"""
+        from message.response import SetResponse
+        
+        logger.info(f"Processing Set request for {len(request.parameters)} parameters")
+        updated_params = {}
+        failed_params = {}
+        
+        for path, value in request.parameters.items():
+            try:
+                self._db.update(path, value)
+                updated_params[path] = value
+                logger.info(f"  ✓ {path} = {value}")
+            except Exception as e:
+                logger.warning(f"  ✗ {path} - error: {e}")
+                failed_params[path] = (7004, f"Failed to set {path}: {str(e)}")
+        
+        return SetResponse(msg_id=request.msg_id, updated_params=updated_params, failed_params=failed_params)
+    
+    async def on_operate_request(self, request):
+        """Handle Operate request"""
+        from message.response import OperateResponse
+        
+        logger.info(f"Processing Operate request: {request.command}")
+        return OperateResponse(msg_id=request.msg_id, command=request.command, error=(7004, "Command not supported"))
+    
+    async def on_get_supported_dm_request(self, request):
+        """Handle GetSupportedDM request"""
+        from message.response import GetSupportedDMResponse
+        
+        logger.info(f"Processing GetSupportedDM request for {request.obj_paths}")
+        objects = self._build_data_model_tree()
+        supported_objects = {}
+        
+        for req_path in request.obj_paths:
+            if not req_path.endswith('.'):
+                req_path += '.'
+            
+            obj_paths = [p for p in objects.keys() if p.startswith(req_path)]
+            logger.info(f"  Returning {len(obj_paths)} objects for {req_path}")
+            
+            for obj_path in obj_paths:
+                obj_data = objects.get(obj_path, {})
+                parameters = {}
+                if request.return_params:
+                    for param_name, access in obj_data.get('params', {}).items():
+                        parameters[param_name] = {
+                            'access': 'read-write' if access == 'readWrite' else 'read-only',
+                            'type': 'string'
+                        }
+                
+                supported_objects[obj_path] = {
+                    'access': 'read-only',
+                    'is_multi_instance': obj_data.get('is_multi_instance', False),
+                    'parameters': parameters
+                }
+        
+        return GetSupportedDMResponse(msg_id=request.msg_id, supported_objects=supported_objects)
+    
+    async def on_get_instances_request(self, request):
+        """Handle GetInstances request"""
+        from message.response import GetInstancesResponse
+        
+        logger.info(f"Processing GetInstances request for {request.obj_paths}")
+        instances = {}
+        
+        for obj_path in request.obj_paths:
+            try:
+                instance_paths = self._db.find_instances(obj_path)
+                instances[obj_path] = instance_paths
+                logger.info(f"  {obj_path}: {len(instance_paths)} instances")
+            except Exception as e:
+                logger.warning(f"  {obj_path} - error: {e}")
+                instances[obj_path] = []
+        
+        return GetInstancesResponse(msg_id=request.msg_id, instances=instances)
+    
+    def _build_data_model_tree(self):
+        """Build hierarchical tree from flat dm.json structure"""
+        return super()._build_data_model_tree(self._data_model)
+    
+    async def _send_bytes(self, data, writer):
+        """Send bytes via WebSocket"""
+        await self._mtp_binding.send_bytes(data, writer)
+    
+    async def _send_notification_bytes(self, data, destination):
+        """Send notification bytes via WebSocket (already connected)"""
+        if not self._mtp_binding.client_websocket:
+            logger.error("WebSocket not connected")
+            return
+        
+        await self._mtp_binding.client_websocket.send(data)
 
 
 async def main():

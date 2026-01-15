@@ -127,9 +127,9 @@ class WebSocketUspBinding(UspBinding):
                     # Deserialize USP message
                     python_msg, from_id, to_id = self.deserialize_bytes(message)
                     
-                    # Call message callback
+                    # Call message callback with client websocket as writer
                     if self._message_callback:
-                        await self._message_callback(python_msg, from_id, to_id, None)
+                        await self._message_callback(python_msg, from_id, to_id, self.client_websocket)
                 
                 except Exception as e:
                     self._logger.error(f"Error in WebSocket receive loop: {e}", exc_info=True)
