@@ -45,21 +45,25 @@ Edit `cfg/multi-controller.json`:
 ```json
 {
   "endpoint_id": "proto::controller-01",
-  "uds": {
-    "socket_path": "/tmp/usp-controller.sock",
-    "mode": "listen"
-  },
-  "coap": {
-    "host": "localhost",
-    "port": 5683,
-    "path": "usp"
-  },
-  "stomp": {
-    "enabled": true,
-    "host": "localhost",
-    "port": 61613,
-    "controller_queue": "/queue/usp-controller",
-    "agent_queue": "/queue/usp-agent"
+  "mtp": {
+    "uds": {
+      "enabled": true,
+      "socket_path": "/tmp/usp-controller.sock",
+      "mode": "listen"
+    },
+    "coap": {
+      "enabled": true,
+      "host": "localhost",
+      "port": 5683,
+      "path": "usp"
+    },
+    "stomp": {
+      "enabled": true,
+      "host": "localhost",
+      "port": 61613,
+      "controller_queue": "/queue/usp-controller",
+      "agent_queue": "/queue/usp-agent"
+    }
   }
 }
 ```
@@ -68,11 +72,13 @@ Edit `cfg/multi-controller.json`:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `stomp.enabled` | `false` | Enable/disable STOMP transport |
-| `stomp.host` | `localhost` | STOMP broker hostname |
-| `stomp.port` | `61613` | STOMP broker port (default for STOMP 1.0) |
-| `stomp.controller_queue` | `/queue/usp-controller` | Queue for controller to receive messages |
-| `stomp.agent_queue` | `/queue/usp-agent` | Queue for agents to receive messages |
+| `mtp.uds.enabled` | `true` | Enable/disable UDS transport |
+| `mtp.coap.enabled` | `true` | Enable/disable CoAP transport |
+| `mtp.stomp.enabled` | `false` | Enable/disable STOMP transport |
+| `mtp.stomp.host` | `localhost` | STOMP broker hostname |
+| `mtp.stomp.port` | `61613` | STOMP broker port (default for STOMP 1.0) |
+| `mtp.stomp.controller_queue` | `/queue/usp-controller` | Queue for controller to receive messages |
+| `mtp.stomp.agent_queue` | `/queue/usp-agent` | Queue for agents to receive messages |
 
 ## Running with STOMP
 

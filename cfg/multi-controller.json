@@ -1,19 +1,23 @@
 {
   "endpoint_id": "proto::controller-01",
-  "uds": {
-    "socket_path": "/tmp/usp-controller.sock",
-    "mode": "listen"
-  },
-  "coap": {
-    "host": "localhost",
-    "port": 5683,
-    "path": "usp"
-  },
-  "stomp": {
-    "enabled": false,
-    "host": "localhost",
-    "port": 61613,
-    "controller_queue": "/queue/usp-controller",
-    "agent_queue": "/queue/usp-agent"
+  "mtp": {
+    "uds": {
+      "enabled": true,
+      "socket_path": "/tmp/usp-controller.sock",
+      "mode": "listen"
+    },
+    "coap": {
+      "enabled": true,
+      "host": "localhost",
+      "port": 5683,
+      "path": "usp"
+    },
+    "stomp": {
+      "enabled": false,
+      "host": "localhost",
+      "port": 61613,
+      "controller_queue": "/queue/usp-controller",
+      "agent_queue": "/queue/usp-agent"
+    }
   }
 }

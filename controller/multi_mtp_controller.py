@@ -69,14 +69,19 @@ class MultiMtpController:
         
         self._endpoint_id = self._config['endpoint_id']
         
+        # Get MTP configuration section
+        mtp_config = self._config.get('mtp', {})
+        
         # UDS configuration
-        uds_config = self._config.get('uds', {})
+        uds_config = mtp_config.get('uds', {})
+        self._uds_enabled = uds_config.get('enabled', True)
         self._uds_socket_path = uds_config.get('socket_path')
         self._uds_mode = uds_config.get('mode', 'listen')
         self._uds_transport = None
         
         # CoAP configuration
-        coap_config = self._config.get('coap', {})
+        coap_config = mtp_config.get('coap', {})
+        self._coap_enabled = coap_config.get('enabled', True)
         self._coap_host = coap_config.get('host', 'localhost')
         self._coap_port = coap_config.get('port', 5683)
         self._coap_path = coap_config.get('path', 'usp')
@@ -84,7 +89,7 @@ class MultiMtpController:
         self._coap_context = None
         
         # STOMP configuration
-        stomp_config = self._config.get('stomp', {})
+        stomp_config = mtp_config.get('stomp', {})
         self._stomp_enabled = stomp_config.get('enabled', False)
         self._stomp_host = stomp_config.get('host', 'localhost')
         self._stomp_port = stomp_config.get('port', 61613)
@@ -111,9 +116,10 @@ class MultiMtpController:
         logger.info("=" * 60)
         logger.info("Multi-MTP Controller Initialized")
         logger.info(f"  Endpoint ID: {self._endpoint_id}")
-        if self._uds_socket_path:
-            logger.info(f"  UDS Socket: {self._uds_socket_path} (mode={self._uds_mode})")
-        logger.info(f"  CoAP: {self._coap_host}:{self._coap_port}/{self._coap_path}")
+        if self._uds_enabled and self._uds_socket_path:
+            logger.info(f"  UDS: {self._uds_socket_path} (mode={self._uds_mode})")
+        if self._coap_enabled:
+            logger.info(f"  CoAP: {self._coap_host}:{self._coap_port}/{self._coap_path}")
         if self._stomp_enabled:
             logger.info(f"  STOMP: {self._stomp_host}:{self._stomp_port}")
             logger.info(f"    Controller Queue: {self._stomp_controller_queue}")
@@ -124,20 +130,25 @@ class MultiMtpController:
         """Start the multi-MTP controller"""
         tasks = []
         
-        # Start UDS listener if configured
-        if self._uds_socket_path:
+        # Start UDS listener if enabled and configured
+        if self._uds_enabled and self._uds_socket_path:
             self._uds_transport = UdsTransport(self._uds_socket_path, self._uds_mode)
             logger.info(f"Starting UDS listener on {self._uds_socket_path}")
             tasks.append(asyncio.create_task(self._run_uds_server()))
         
-        # Start CoAP listener
-        logger.info(f"Starting CoAP listener on {self._coap_host}:{self._coap_port}/{self._coap_path}")
-        tasks.append(asyncio.create_task(self._run_coap_server()))
+        # Start CoAP listener if enabled
+        if self._coap_enabled:
+            logger.info(f"Starting CoAP listener on {self._coap_host}:{self._coap_port}/{self._coap_path}")
+            tasks.append(asyncio.create_task(self._run_coap_server()))
         
         # Start STOMP listener if enabled
         if self._stomp_enabled:
             logger.info(f"Starting STOMP listener on {self._stomp_host}:{self._stomp_port}")
             tasks.append(asyncio.create_task(self._run_stomp_server()))
+        
+        if not tasks:
+            logger.error("No transports enabled! Enable at least one MTP in config.")
+            return
         
         logger.info("Controller waiting for agent messages on multiple MTPs...")
         
