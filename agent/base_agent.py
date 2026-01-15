@@ -38,6 +38,21 @@ from message.response import GetResponse, SetResponse, OperateResponse, GetSuppo
 logger = logging.getLogger(__name__)
 
 
+class RequestContext:
+    """
+    Encapsulates the context of a USP request
+    
+    Contains all information needed to send a response back to the controller,
+    including the MTP writer and endpoint IDs. This enables proper handling
+    of concurrent requests without instance state.
+    """
+    def __init__(self, from_id, to_id, writer, mtp_type=None):
+        self.from_id = from_id      # Controller endpoint ID
+        self.to_id = to_id          # Agent endpoint ID
+        self.writer = writer        # Where to send response (MTP-specific)
+        self.mtp_type = mtp_type    # Optional: 'uds', 'coap', 'websocket', 'stomp'
+
+
 class BaseAgent(ABC):
     """
     Abstract base class for USP agents
@@ -65,8 +80,6 @@ class BaseAgent(ABC):
             self._db = None
         if not hasattr(self, '_data_model'):
             self._data_model = None
-        if not hasattr(self, '_current_writer'):
-            self._current_writer = None
     
     async def handle_incoming_request(self, request, from_id, to_id, writer):
         """
@@ -78,10 +91,8 @@ class BaseAgent(ABC):
             to_id (str): Agent endpoint ID (should match self.endpoint_id)
             writer: Stream writer for sending response
         """
-        self._current_writer = writer
-        
-        # Store controller ID from request
-        controller_id = from_id
+        # Create request context
+        context = RequestContext(from_id, to_id, writer)
         
         try:
             # Dispatch to appropriate handler based on request type
@@ -101,16 +112,14 @@ class BaseAgent(ABC):
             
             # Send response if generated
             if response:
-                await self.respond(response, request.from_id)
+                await self.respond(response, context)
                 
         except Exception as e:
             self._logger.error(f"Error handling request: {e}", exc_info=True)
             # Send error response
             if hasattr(self, '_mtp_binding') and self._mtp_binding:
                 error_bytes = self._mtp_binding.create_error_response(request, 9000, str(e))
-                await self._send_bytes(error_bytes, writer)
-        finally:
-            self._current_writer = None
+                await self._send_bytes(error_bytes, context.writer)
     
     async def on_connect(self):
         """
@@ -301,29 +310,26 @@ class BaseAgent(ABC):
         
         return GetInstancesResponse(msg_id=request.msg_id, instances=instances)
     
-    async def respond(self, response, to_id):
+    async def respond(self, response, context):
         """
         Send response message
         
         Args:
             response: Python response object
-            to_id (str): Destination endpoint ID
+            context (RequestContext): Request context with writer and endpoint IDs
         """
         if not self._mtp_binding:
             raise RuntimeError("MTP binding not initialized")
         
         # Set response IDs
         response.from_id = self.endpoint_id
-        response.to_id = to_id
+        response.to_id = context.from_id
         
         # Serialize
-        data = self._mtp_binding.serialize_message(response, to_id)
+        data = self._mtp_binding.serialize_message(response, context.from_id)
         
-        # Send on current connection
-        if self._current_writer:
-            await self._send_bytes(data, self._current_writer)
-        else:
-            self._logger.warning("No active connection to send response")
+        # Send on the writer from context (explicit, not instance state)
+        await self._send_bytes(data, context.writer)
     
     async def notify(self, notification, to_id, controller_socket):
         """
