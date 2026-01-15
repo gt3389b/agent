@@ -164,7 +164,7 @@ class BaseAgent(ABC):
                 )
                 
                 notif_msg = boot_notif.generate_notif_msg()
-                await self.notify(notif_msg, controller_id, None)
+                await self.notify(notif_msg, controller_id)
                 
                 self._logger.info(f"✓ Boot! notification sent to {controller_id}")
                 
@@ -331,14 +331,13 @@ class BaseAgent(ABC):
         # Send on the writer from context (explicit, not instance state)
         await self._send_bytes(data, context.writer)
     
-    async def notify(self, notification, to_id, controller_socket):
+    async def notify(self, notification, to_id):
         """
         Send notification to controller
         
         Args:
             notification: Protobuf notification message
             to_id (str): Controller endpoint ID
-            controller_socket (str): Path to controller socket
         """
         if not self._mtp_binding:
             raise RuntimeError("MTP binding not initialized")
@@ -346,8 +345,8 @@ class BaseAgent(ABC):
         # Serialize notification
         data = self._mtp_binding.serialize_message(notification, to_id, self.endpoint_id)
         
-        # Connect and send (notifications are one-way)
-        await self._send_notification_bytes(data, controller_socket)
+        # Send via MTP-specific implementation (routing handled by subclass)
+        await self._send_notification_bytes(data, to_id)
     
     @abstractmethod
     async def _send_bytes(self, data, writer):
@@ -361,13 +360,13 @@ class BaseAgent(ABC):
         pass
     
     @abstractmethod
-    async def _send_notification_bytes(self, data, socket_path):
+    async def _send_notification_bytes(self, data, to_id):
         """
         Send notification bytes (implemented by subclass)
         
         Args:
             data (bytes): Serialized notification
-            socket_path (str): Controller socket path
+            to_id (str): Controller endpoint ID (routing handled by subclass)
         """
         pass
     

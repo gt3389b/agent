@@ -277,11 +277,8 @@ class WebSocketAgent(BaseAgent):
             # Generate notification message
             notif_msg = value_change_notif.generate_notif_msg()
             
-            # Get controller WebSocket URL
-            controller_url = self._find_controller_url()
-            
-            # Send via binding
-            await self.notify(notif_msg, recipient, controller_url)
+            # Send via binding (routing handled internally)
+            await self.notify(notif_msg, recipient)
             
         except Exception as e:
             logger.error(f"Error sending ValueChange notification: {e}", exc_info=True)
@@ -303,7 +300,7 @@ class WebSocketAgent(BaseAgent):
         """Send bytes via WebSocket"""
         await self._mtp_binding.send_bytes(data, writer)
     
-    async def _send_notification_bytes(self, data, destination):
+    async def _send_notification_bytes(self, data, to_id):
         """Send notification bytes via WebSocket (already connected)"""
         if not self._mtp_binding.client_websocket:
             logger.error("WebSocket not connected")
