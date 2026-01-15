@@ -4,5 +4,10 @@
   "uds_mode": "listen",
   "coap_host": "localhost",
   "coap_port": 5683,
-  "coap_path": "usp"
+  "coap_path": "usp",
+  "stomp_enabled": false,
+  "stomp_host": "localhost",
+  "stomp_port": 61613,
+  "stomp_controller_queue": "/queue/usp-controller",
+  "stomp_agent_queue": "/queue/usp-agent"
 }

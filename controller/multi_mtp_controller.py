@@ -35,6 +35,7 @@ from typing import Dict, Optional, Tuple
 
 import aiocoap
 import aiocoap.resource as resource
+import stomp
 
 from mtp.uds import UdsTransport
 from mtp.coap_binding import CoapUspBinding
@@ -47,10 +48,10 @@ logger = logging.getLogger(__name__)
 
 class MultiMtpController:
     """
-    Multi-MTP Controller supporting both UDS and CoAP transports
+    Multi-MTP Controller supporting UDS, CoAP, and STOMP transports
     
     This controller:
-    - Listens on both UDS socket and CoAP port
+    - Listens on both UDS socket, CoAP port, and STOMP broker
     - Tracks which MTP each agent uses
     - Routes requests/responses using the correct transport
     """
@@ -80,10 +81,20 @@ class MultiMtpController:
         self._coap_binding = None
         self._coap_context = None
         
+        # STOMP configuration
+        self._stomp_enabled = self._config.get('stomp_enabled', False)
+        self._stomp_host = self._config.get('stomp_host', 'localhost')
+        self._stomp_port = self._config.get('stomp_port', 61613)
+        self._stomp_controller_queue = self._config.get('stomp_controller_queue', '/queue/usp-controller')
+        self._stomp_agent_queue = self._config.get('stomp_agent_queue', '/queue/usp-agent')
+        self._stomp_connection = None
+        self._stomp_connected = False
+        self._stomp_message_queue = asyncio.Queue()
+        
         # Agent tracking - stores MTP info for each agent
         # Format: agent_id -> {
-        #   'mtp_type': 'uds' | 'coap',
-        #   'mtp_info': socket_path | coap_url,
+        #   'mtp_type': 'uds' | 'coap' | 'stomp',
+        #   'mtp_info': socket_path | coap_url | stomp_reply_queue,
         #   'last_boot': timestamp,
         #   'last_heartbeat': timestamp,
         #   'metadata': {...}
@@ -100,6 +111,10 @@ class MultiMtpController:
         if self._uds_socket_path:
             logger.info(f"  UDS Socket: {self._uds_socket_path} (mode={self._uds_mode})")
         logger.info(f"  CoAP: {self._coap_host}:{self._coap_port}/{self._coap_path}")
+        if self._stomp_enabled:
+            logger.info(f"  STOMP: {self._stomp_host}:{self._stomp_port}")
+            logger.info(f"    Controller Queue: {self._stomp_controller_queue}")
+            logger.info(f"    Agent Queue: {self._stomp_agent_queue}")
         logger.info("=" * 60)
     
     async def start(self):
@@ -115,6 +130,11 @@ class MultiMtpController:
         # Start CoAP listener
         logger.info(f"Starting CoAP listener on {self._coap_host}:{self._coap_port}/{self._coap_path}")
         tasks.append(asyncio.create_task(self._run_coap_server()))
+        
+        # Start STOMP listener if enabled
+        if self._stomp_enabled:
+            logger.info(f"Starting STOMP listener on {self._stomp_host}:{self._stomp_port}")
+            tasks.append(asyncio.create_task(self._run_stomp_server()))
         
         logger.info("Controller waiting for agent messages on multiple MTPs...")
         
@@ -151,6 +171,41 @@ class MultiMtpController:
             
         except Exception as e:
             logger.error(f"CoAP server error: {e}", exc_info=True)
+    
+    async def _run_stomp_server(self):
+        """Run STOMP server (connect to broker and subscribe)"""
+        try:
+            # Create STOMP listener with callback
+            listener = StompMessageListener(self)
+            
+            # Connect to STOMP broker
+            self._stomp_connection = stomp.Connection([(self._stomp_host, self._stomp_port)])
+            self._stomp_connection.set_listener('', listener)
+            self._stomp_connection.connect(wait=True)
+            
+            # Subscribe to controller queue
+            self._stomp_connection.subscribe(
+                destination=self._stomp_controller_queue,
+                id=1,
+                ack='auto'
+            )
+            
+            logger.info(f"✓ STOMP connected to {self._stomp_host}:{self._stomp_port}")
+            logger.info(f"✓ STOMP subscribed to {self._stomp_controller_queue}")
+            
+            self._stomp_connected = True
+            
+            # Process messages from queue
+            while True:
+                message_data = await self._stomp_message_queue.get()
+                if message_data:
+                    await self._handle_stomp_message(message_data)
+            
+        except Exception as e:
+            logger.error(f"STOMP server error: {e}", exc_info=True)
+        finally:
+            if self._stomp_connection and self._stomp_connection.is_connected():
+                self._stomp_connection.disconnect()
     
     async def _handle_uds_message(self, data, writer):
         """
@@ -270,14 +325,60 @@ class MultiMtpController:
             logger.error(f"Error handling CoAP message: {e}", exc_info=True)
             return None
     
+    async def _handle_stomp_message(self, message_data):
+        """
+        Handle received USP message from STOMP transport
+        
+        Args:
+            message_data (dict): Message data from STOMP listener
+                Contains 'body' (bytes) and 'headers' (dict)
+        """
+        try:
+            # Extract message body
+            data = message_data['body']
+            headers = message_data.get('headers', {})
+            
+            # Parse USP Record
+            record = usp_record_pb2.Record()
+            record.ParseFromString(data)
+            
+            agent_id = record.from_id
+            
+            # Extract reply-to queue from headers (if present)
+            reply_to = headers.get('reply-to', self._stomp_agent_queue)
+            
+            logger.debug(f"STOMP message from {agent_id}, reply-to: {reply_to}")
+            
+            # Track this agent as using STOMP transport
+            if agent_id not in self._connected_agents:
+                self._connected_agents[agent_id] = {
+                    'mtp_type': 'stomp',
+                    'mtp_info': reply_to,  # Store reply-to queue
+                    'last_heartbeat': datetime.now().isoformat(),
+                    'metadata': {}
+                }
+            else:
+                # Update MTP info in case agent queue changed
+                self._connected_agents[agent_id]['mtp_type'] = 'stomp'
+                self._connected_agents[agent_id]['mtp_info'] = reply_to
+            
+            # Update last heartbeat
+            self._connected_agents[agent_id]['last_heartbeat'] = datetime.now().isoformat()
+            
+            # Process the message (no response needed for STOMP - async)
+            await self._process_message(record, None, 'stomp')
+            
+        except Exception as e:
+            logger.error(f"Error handling STOMP message: {e}", exc_info=True)
+    
     async def _process_message(self, record, writer_or_request, mtp_type):
         """
-        Process USP message (common logic for both UDS and CoAP)
+        Process USP message (common logic for UDS, CoAP, and STOMP)
         
         Args:
             record: USP Record protobuf
-            writer_or_request: Stream writer (UDS) or CoAP request
-            mtp_type: 'uds' or 'coap'
+            writer_or_request: Stream writer (UDS) or CoAP request (or None for STOMP)
+            mtp_type: 'uds' | 'coap' | 'stomp'
         
         Returns:
             Optional[bytes]: Response data for CoAP, None for UDS
@@ -491,6 +592,8 @@ class MultiMtpController:
             return await self._send_request_uds(request_msg, mtp_info, request_type)
         elif mtp_type == 'coap':
             return await self._send_request_coap(request_msg, mtp_info, request_type)
+        elif mtp_type == 'stomp':
+            return await self._send_request_stomp(request_msg, mtp_info, request_type)
         else:
             logger.error(f"Unknown MTP type: {mtp_type}")
             return None, None
@@ -568,6 +671,39 @@ class MultiMtpController:
             
         except Exception as e:
             logger.error(f"Error sending {request_type} via CoAP: {e}", exc_info=True)
+            return None, None
+    
+    async def _send_request_stomp(self, request_msg, agent_queue, request_type):
+        """
+        Send request via STOMP
+        
+        Note: STOMP is async/message-based, so we don't wait for immediate response
+        Response will arrive via the STOMP listener callback
+        """
+        try:
+            if not self._stomp_connected:
+                logger.error("STOMP not connected")
+                return None, None
+            
+            # Serialize request
+            request_record = request_msg.SerializeToString()
+            
+            # Send to agent's queue
+            self._stomp_connection.send(
+                destination=agent_queue,
+                body=request_record,
+                headers={'reply-to': self._stomp_controller_queue}
+            )
+            
+            logger.info(f"✓ {request_type} request sent via STOMP to {agent_queue}")
+            logger.info(f"Note: STOMP response will arrive asynchronously via {self._stomp_controller_queue}")
+            
+            # For STOMP, we don't wait for response here - it's message-based
+            # The response will be received via the STOMP listener
+            return None, None
+            
+        except Exception as e:
+            logger.error(f"Error sending {request_type} via STOMP: {e}", exc_info=True)
             return None, None
     
     async def _configure_periodic_heartbeat(self, agent_id, controller_id):
@@ -832,6 +968,9 @@ class MultiMtpController:
         if self._coap_context:
             await self._coap_context.shutdown()
         
+        if self._stomp_connection and self._stomp_connection.is_connected():
+            self._stomp_connection.disconnect()
+        
         logger.info("Multi-MTP Controller stopped")
 
 
@@ -862,3 +1001,51 @@ class CoapUspResource(resource.Resource):
         except Exception as e:
             logger.error(f"Error handling CoAP POST: {e}", exc_info=True)
             return aiocoap.Message(code=aiocoap.INTERNAL_SERVER_ERROR)
+
+
+class StompMessageListener(stomp.ConnectionListener):
+    """STOMP listener that queues messages for async processing"""
+    
+    def __init__(self, controller):
+        """
+        Initialize STOMP listener
+        
+        Args:
+            controller (MultiMtpController): Parent controller
+        """
+        self.controller = controller
+    
+    def on_error(self, frame):
+        """Handle STOMP errors"""
+        logger.error(f"STOMP error: {frame.body}")
+    
+    def on_message(self, frame):
+        """
+        Handle incoming STOMP message
+        
+        Args:
+            frame: STOMP frame containing message
+        """
+        try:
+            # Queue the message for async processing
+            message_data = {
+                'body': frame.body.encode('latin-1') if isinstance(frame.body, str) else frame.body,
+                'headers': frame.headers
+            }
+            
+            # Use asyncio to put message in queue from sync context
+            asyncio.get_event_loop().call_soon_threadsafe(
+                self.controller._stomp_message_queue.put_nowait,
+                message_data
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in STOMP listener: {e}", exc_info=True)
+    
+    def on_connected(self, frame):
+        """Handle successful STOMP connection"""
+        logger.info("STOMP connection established")
+    
+    def on_disconnected(self):
+        """Handle STOMP disconnection"""
+        logger.warning("STOMP connection lost")
