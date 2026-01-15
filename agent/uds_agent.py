@@ -192,6 +192,20 @@ class UdsAgent:
                 if writer:
                     await self._transport.send_message(resp_payload, writer)
                     logger.info("✓ Set response sent to controller")
+                    
+            elif msg.header.msg_type == usp_msg_pb2.Header.GET:
+                logger.info("  Message Type: GET")
+                
+                # Process Get request using request handler
+                req_msg, req_record, resp_msg, resp_payload = self._request_handler.handle_request(data)
+                
+                logger.info("✓ Get request processed successfully")
+                logger.info(f"  Response payload size: {len(resp_payload)} bytes")
+                
+                # Send response back to controller
+                if writer:
+                    await self._transport.send_message(resp_payload, writer)
+                    logger.info("✓ Get response sent to controller")
             else:
                 msg_type = msg.header.msg_type
                 logger.warning(f"Unhandled message type: {msg_type}")

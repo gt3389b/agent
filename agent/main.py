@@ -86,7 +86,7 @@ class Agent:
             logging.info("#######################################################")
 
             async def run_uds_agent():
-                my_uds_agent = uds_agent.UdsAgent(dm_file_name, db_file_name, net_intf, cfg_file_name, debug)
+                my_uds_agent = uds_agent.UdsAgent(dm_file_name, db_file_name, cfg_file_name)
                 await my_uds_agent.start()
             
             asyncio.run(run_uds_agent())

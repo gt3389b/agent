@@ -27,6 +27,8 @@ SOFTWARE.
 
 import logging
 import json
+import asyncio
+from datetime import datetime
 
 from mtp.uds import UdsTransport
 from message import usp_record_pb2
@@ -54,6 +56,13 @@ class UdsController:
         self._socket_path = self._config['socket_path']
         self._mode = self._config.get('mode', 'listen')
         self._transport = None
+        
+        # Agent tracking
+        self._connected_agents = {}  # agent_id -> {last_boot, last_heartbeat, socket_path}
+        
+        # Request/response tracking
+        self._pending_requests = {}  # msg_id -> Future
+        self._msg_id_counter = 0
         
         logger.info("=" * 60)
         logger.info("Async UDS Controller Initialized")
@@ -103,10 +112,15 @@ class UdsController:
             
             # Determine message type
             msg_type = msg.header.msg_type
+            msg_id = msg.header.msg_id
             logger.info(f"  Message Type: {msg_type}")
+            logger.info(f"  Message ID: {msg_id}")
             
             if msg.body.request.HasField('notify'):
                 await self._handle_notify(record, msg, writer)
+            elif msg.body.response.WhichOneof('resp_type'):
+                # This is a response to a request we sent
+                await self._handle_response(msg)
             else:
                 logger.info(f"  Payload size: {len(record.no_session_context.payload)} bytes")
             
@@ -139,11 +153,19 @@ class UdsController:
             # Check if it's a Boot notification
             if event.event_name == "Boot!":
                 logger.info("✓ Boot! notification received successfully!")
+                # Track agent connection
+                self._connected_agents[record.from_id] = {
+                    'last_boot': datetime.now().isoformat(),
+                    'last_heartbeat': datetime.now().isoformat(),
+                    'socket_path': '/tmp/usp-agent.sock'  # TODO: get from database
+                }
                 # Send Set request to configure periodic heartbeat
-                # Don't use writer as the agent connection is closed
                 await self._configure_periodic_heartbeat(record.from_id, record.to_id)
             elif event.event_name == "Periodic!":
                 logger.info("✓ Periodic! notification received successfully!")
+                # Update heartbeat timestamp
+                if record.from_id in self._connected_agents:
+                    self._connected_agents[record.from_id]['last_heartbeat'] = datetime.now().isoformat()
         else:
             logger.info("  Notify type: (other)")
     
@@ -285,6 +307,265 @@ class UdsController:
                 
         except Exception as e:
             logger.error(f"Error configuring periodic heartbeat: {e}", exc_info=True)
+    
+    def _generate_msg_id(self):
+        """Generate unique message ID"""
+        self._msg_id_counter += 1
+        return str(self._msg_id_counter)
+    
+    async def _handle_response(self, msg):
+        """
+        Handle response message and complete pending future
+        
+        Args:
+            msg: USP Message with response
+        """
+        msg_id = msg.header.msg_id
+        
+        if msg_id in self._pending_requests:
+            future = self._pending_requests[msg_id]
+            
+            # Parse response based on type
+            if msg.body.response.HasField('get_resp'):
+                result = self._parse_get_response(msg)
+            elif msg.body.response.HasField('set_resp'):
+                result = self._parse_set_response(msg)
+            elif msg.body.response.HasField('operate_resp'):
+                result = self._parse_operate_response(msg)
+            else:
+                result = None
+            
+            # Complete the future
+            if not future.done():
+                future.set_result(result)
+        else:
+            logger.warning(f"Received response for unknown msg_id: {msg_id}")
+    
+    def _parse_get_response(self, msg):
+        """Parse Get response into dict"""
+        result = {}
+        get_resp = msg.body.response.get_resp
+        
+        for req_path_result in get_resp.req_path_results:
+            # Check if there's an error (err_code is non-zero for errors)
+            if req_path_result.err_code != 0:
+                # Error for this path
+                result[req_path_result.requested_path] = {
+                    'error': req_path_result.err_code,
+                    'error_msg': req_path_result.err_msg
+                }
+            else:
+                # Success - collect parameters
+                for resolved in req_path_result.resolved_path_results:
+                    for param_name, param_value in resolved.result_params.items():
+                        result[param_name] = param_value
+        
+        return result
+    
+    def _parse_set_response(self, msg):
+        """Parse Set response into dict"""
+        result = {}
+        set_resp = msg.body.response.set_resp
+        
+        for updated_obj in set_resp.updated_obj_results:
+            if updated_obj.oper_status.HasField('oper_success'):
+                for inst_result in updated_obj.oper_status.oper_success.updated_inst_results:
+                    for param_name, param_value in inst_result.updated_params.items():
+                        result[param_name] = param_value
+            elif updated_obj.oper_status.HasField('oper_failure'):
+                err = updated_obj.oper_status.oper_failure
+                result['error'] = {
+                    'code': err.err_code,
+                    'message': err.err_msg
+                }
+        
+        return result
+    
+    def _parse_operate_response(self, msg):
+        """Parse Operate response into dict"""
+        # TODO: Implement when Operate is needed
+        return {}
+    
+    async def send_get_request(self, agent_id, paths):
+        """
+        Send Get request to agent and wait for response
+        
+        Args:
+            agent_id: Agent endpoint ID
+            paths: List of parameter paths to get
+            
+        Returns:
+            dict: Parameter name -> value mapping
+        """
+        if agent_id not in self._connected_agents:
+            raise ValueError(f"Agent not connected: {agent_id}")
+        
+        agent_socket = self._connected_agents[agent_id]['socket_path']
+        msg_id = self._generate_msg_id()
+        
+        # Create Get message
+        get_msg = Get(
+            to_id=agent_id,
+            from_id=self._endpoint_id,
+            param_paths=paths
+        )
+        
+        # Set custom msg_id
+        get_msg._msg.header.msg_id = msg_id
+        get_msg.generate_record()  # Regenerate record with new msg_id
+        
+        # Create future for response
+        future = asyncio.Future()
+        self._pending_requests[msg_id] = future
+        
+        try:
+            # Send request and wait for response on same connection
+            transport = UdsTransport(agent_socket, mode='connect')
+            await transport.connect()
+            request_record = get_msg.SerializeToString()
+            await transport.send_message(request_record)
+            
+            logger.info(f"✓ Get request sent (msg_id={msg_id})")
+            
+            # Wait for response on the same connection
+            response_data = await asyncio.wait_for(transport.receive_message(), timeout=10.0)
+            
+            if response_data:
+                # Parse response
+                resp_record = usp_record_pb2.Record()
+                resp_record.ParseFromString(response_data)
+                
+                resp_msg = usp_msg_pb2.Msg()
+                resp_msg.ParseFromString(resp_record.no_session_context.payload)
+                
+                # Parse and return result
+                result = self._parse_get_response(resp_msg)
+                return result
+            else:
+                raise RuntimeError("No response received")
+            
+        except asyncio.TimeoutError:
+            raise TimeoutError("Get request timed out")
+        finally:
+            if msg_id in self._pending_requests:
+                del self._pending_requests[msg_id]
+            await transport.close()
+    
+    async def send_set_request(self, agent_id, parameters):
+        """
+        Send Set request to agent and wait for response
+        
+        Args:
+            agent_id: Agent endpoint ID
+            parameters: List of {path: ..., value: ...} dicts
+            
+        Returns:
+            dict: Updated parameters
+        """
+        if agent_id not in self._connected_agents:
+            raise ValueError(f"Agent not connected: {agent_id}")
+        
+        agent_socket = self._connected_agents[agent_id]['socket_path']
+        msg_id = self._generate_msg_id()
+        
+        # Group parameters by object path
+        obj_paths = {}
+        for param in parameters:
+            path = param['path']
+            value = param['value']
+            
+            # Extract object path (everything before last parameter)
+            if '.' in path:
+                parts = path.rsplit('.', 1)
+                obj_path = parts[0] + '.'
+                param_name = parts[1]
+            else:
+                raise ValueError(f"Invalid parameter path: {path}")
+            
+            if obj_path not in obj_paths:
+                obj_paths[obj_path] = []
+            
+            obj_paths[obj_path].append({"param": param_name, "value": value})
+        
+        # Build objects list
+        objects = [
+            {"obj_path": obj_path, "param_settings": settings}
+            for obj_path, settings in obj_paths.items()
+        ]
+        
+        # Create Set message
+        set_msg = Set(
+            to_id=agent_id,
+            from_id=self._endpoint_id,
+            objects=objects,
+            allow_partial=True
+        )
+        
+        # Set custom msg_id
+        set_msg._msg.header.msg_id = msg_id
+        set_msg.generate_record()  # Regenerate record with new msg_id
+        
+        try:
+            # Send request and wait for response on same connection
+            transport = UdsTransport(agent_socket, mode='connect')
+            await transport.connect()
+            request_record = set_msg.SerializeToString()
+            await transport.send_message(request_record)
+            
+            logger.info(f"✓ Set request sent (msg_id={msg_id})")
+            
+            # Wait for response on the same connection
+            response_data = await asyncio.wait_for(transport.receive_message(), timeout=10.0)
+            
+            if response_data:
+                # Parse response
+                resp_record = usp_record_pb2.Record()
+                resp_record.ParseFromString(response_data)
+                
+                resp_msg = usp_msg_pb2.Msg()
+                resp_msg.ParseFromString(resp_record.no_session_context.payload)
+                
+                # Parse and return result
+                result = self._parse_set_response(resp_msg)
+                return result
+            else:
+                raise RuntimeError("No response received")
+            
+        except asyncio.TimeoutError:
+            raise TimeoutError("Set request timed out")
+        finally:
+            await transport.close()
+    
+    async def send_operate_request(self, agent_id, command, args):
+        """
+        Send Operate request to agent and wait for response
+        
+        Args:
+            agent_id: Agent endpoint ID
+            command: Command path
+            args: Command arguments
+            
+        Returns:
+            dict: Operation result
+        """
+        # TODO: Implement when Operate is needed
+        raise NotImplementedError("Operate command not yet implemented")
+    
+    def get_connected_agents(self):
+        """
+        Get list of connected agents
+        
+        Returns:
+            list: [{"agent_id": ..., "last_boot": ..., "last_heartbeat": ...}, ...]
+        """
+        agents = []
+        for agent_id, info in self._connected_agents.items():
+            agents.append({
+                'agent_id': agent_id,
+                'last_boot': info['last_boot'],
+                'last_heartbeat': info['last_heartbeat']
+            })
+        return agents
     
     async def stop(self):
         """Stop the controller and clean up"""

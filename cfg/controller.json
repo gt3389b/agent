@@ -1,0 +1,5 @@
+{
+  "endpoint_id": "proto::uds-controller-001",
+  "socket_path": "/tmp/usp-controller.sock",
+  "mode": "listen"
+}
