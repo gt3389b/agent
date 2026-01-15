@@ -45,42 +45,43 @@ import time
 import logging
 import datetime
 import threading
-import prometheus_client
+# import prometheus_client
 
 from agent import utils
 
-# pylint: disable-msg=no-value-for-parameter
-DB_GET_SUMMARY_METRIC = \
-    prometheus_client.Summary("database_get_processing_seconds",
-                              "Time spent handling Database Get Call")
-# pylint: disable-msg=no-value-for-parameter
-DB_UPDATE_SUMMARY_METRIC = \
-    prometheus_client.Summary("database_update_processing_seconds",
-                              "Time spent handling Database Update Call")
-# pylint: disable-msg=no-value-for-parameter
-DB_INSERT_SUMMARY_METRIC = \
-    prometheus_client.Summary("database_insert_processing_seconds",
-                              "Time spent handling Database Insert Call")
-# pylint: disable-msg=no-value-for-parameter
-DB_DELETE_SUMMARY_METRIC = \
-    prometheus_client.Summary("database_delete_processing_seconds",
-                              "Time spent handling Database Delete Call")
-# pylint: disable-msg=no-value-for-parameter
-DB_FIND_PARAMS_SUMMARY_METRIC = \
-    prometheus_client.Summary("database_find_params_processing_seconds",
-                              "Time spent handling Database FindParams Call")
-# pylint: disable-msg=no-value-for-parameter
-DB_FIND_INSTANCES_SUMMARY_METRIC = \
-    prometheus_client.Summary("database_find_instances_processing_seconds",
-                              "Time spent handling Database FindInstances Call")
-# pylint: disable-msg=no-value-for-parameter
-DB_FIND_OBJECTS_SUMMARY_METRIC = \
-    prometheus_client.Summary("database_find_objects_processing_seconds",
-                              "Time spent handling Database FindObjects Call")
-# pylint: disable-msg=no-value-for-parameter
-DB_FIND_IMPL_OBJECTS_SUMMARY_METRIC = \
-    prometheus_client.Summary("database_find_impl_objects_processing_seconds",
-                              "Time spent handling Database FindImplObjects Call")
+# Metrics disabled - prometheus_client not installed
+# # pylint: disable-msg=no-value-for-parameter
+# DB_GET_SUMMARY_METRIC = \
+#     prometheus_client.Summary("database_get_processing_seconds",
+#                               "Time spent handling Database Get Call")
+# # pylint: disable-msg=no-value-for-parameter
+# DB_UPDATE_SUMMARY_METRIC = \
+#     prometheus_client.Summary("database_update_processing_seconds",
+#                               "Time spent handling Database Update Call")
+# # pylint: disable-msg=no-value-for-parameter
+# DB_INSERT_SUMMARY_METRIC = \
+#     prometheus_client.Summary("database_insert_processing_seconds",
+#                               "Time spent handling Database Insert Call")
+# # pylint: disable-msg=no-value-for-parameter
+# DB_DELETE_SUMMARY_METRIC = \
+#     prometheus_client.Summary("database_delete_processing_seconds",
+#                               "Time spent handling Database Delete Call")
+# # pylint: disable-msg=no-value-for-parameter
+# DB_FIND_PARAMS_SUMMARY_METRIC = \
+#     prometheus_client.Summary("database_find_params_processing_seconds",
+#                               "Time spent handling Database FindParams Call")
+# # pylint: disable-msg=no-value-for-parameter
+# DB_FIND_INSTANCES_SUMMARY_METRIC = \
+#     prometheus_client.Summary("database_find_instances_processing_seconds",
+#                               "Time spent handling Database FindInstances Call")
+# # pylint: disable-msg=no-value-for-parameter
+# DB_FIND_OBJECTS_SUMMARY_METRIC = \
+#     prometheus_client.Summary("database_find_objects_processing_seconds",
+#                               "Time spent handling Database FindObjects Call")
+# # pylint: disable-msg=no-value-for-parameter
+# DB_FIND_IMPL_OBJECTS_SUMMARY_METRIC = \
+#     prometheus_client.Summary("database_find_impl_objects_processing_seconds",
+#                               "Time spent handling Database FindImplObjects Call")
 
 
 class Database:
@@ -118,7 +119,7 @@ class Database:
                 self._db = {}
                 logger.error("Persisted Database is NOT properly formatted JSON: %s", parse_err)
 
-    @DB_GET_SUMMARY_METRIC.time()
+    # @DB_GET_SUMMARY_METRIC.time()
     def get(self, path):
         """Retrieve the value of the incoming path, or throw a NoSuchPathError"""
         value = None
@@ -149,7 +150,7 @@ class Database:
 
         return value
 
-    @DB_UPDATE_SUMMARY_METRIC.time()
+    # @DB_UPDATE_SUMMARY_METRIC.time()
     def update(self, path, value):
         """Change the value of the incoming path, or throw a NoSuchPathError"""
         if path in self._db:
@@ -158,7 +159,7 @@ class Database:
         else:
             raise NoSuchPathError(path)
 
-    @DB_FIND_PARAMS_SUMMARY_METRIC.time()
+    # @DB_FIND_PARAMS_SUMMARY_METRIC.time()
     def find_params(self, path):
         """Retrieve a set of parameter paths that match the incoming path"""
         found_keys = []
@@ -210,7 +211,7 @@ class Database:
 
         return is_writable
 
-    @DB_FIND_INSTANCES_SUMMARY_METRIC.time()
+    # @DB_FIND_INSTANCES_SUMMARY_METRIC.time()
     def find_instances(self, partial_path):
         """Retrieve a set of object instance paths that match the incoming path"""
         found_keys = []
@@ -260,7 +261,7 @@ class Database:
 
         return found_keys
 
-    @DB_FIND_OBJECTS_SUMMARY_METRIC.time()
+    # @DB_FIND_OBJECTS_SUMMARY_METRIC.time()
     def find_objects(self, partial_path):
         """Retrieve a set of instantiated object paths that match the incoming path"""
         found_keys = []
@@ -304,7 +305,7 @@ class Database:
 
         return found_keys
 
-    @DB_FIND_IMPL_OBJECTS_SUMMARY_METRIC.time()
+    # @DB_FIND_IMPL_OBJECTS_SUMMARY_METRIC.time()
     def find_impl_objects(self, partial_path, next_level):
         """Retrieve a set of implemented object paths that match the incoming path"""
         found_keys = []
@@ -364,7 +365,7 @@ class Database:
 
         return found_keys
 
-    @DB_INSERT_SUMMARY_METRIC.time()
+    # @DB_INSERT_SUMMARY_METRIC.time()
     def insert(self, partial_path):
         """Insert a new record in the table"""
         logger = logging.getLogger(self.__class__.__name__)
@@ -395,7 +396,7 @@ class Database:
 
         return next_inst_num
 
-    @DB_DELETE_SUMMARY_METRIC.time()
+    # @DB_DELETE_SUMMARY_METRIC.time()
     def delete(self, partial_path):
         """Remove an existing record from the table"""
         logger = logging.getLogger(self.__class__.__name__)

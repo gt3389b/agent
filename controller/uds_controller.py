@@ -249,7 +249,9 @@ class UdsController:
                 return_params=True
             )
             
-            await self._send_dm_request(gsdm_msg, 'GetSupportedDM', agent_socket)
+            resp_record, resp_msg = await self._send_dm_request(gsdm_msg, 'GetSupportedDM', agent_socket)
+            if resp_msg:
+                await self._handle_get_supported_dm_response(resp_msg)
             
             # 2. GetInstances - Query multi-instance objects
             logger.info("Sending GetInstances request...")
@@ -264,9 +266,11 @@ class UdsController:
                 first_level_only=False
             )
             
-            await self._send_dm_request(gi_msg, 'GetInstances', agent_socket)
+            resp_record, resp_msg = await self._send_dm_request(gi_msg, 'GetInstances', agent_socket)
+            if resp_msg:
+                await self._handle_get_instances_response(resp_msg)
             
-            logger.info("✓ Agent capability queries sent")
+            logger.info("✓ Agent capability queries completed")
             logger.info("=" * 60)
             
         except Exception as e:
@@ -274,27 +278,48 @@ class UdsController:
     
     async def _send_dm_request(self, request_msg, request_type, agent_socket):
         """
-        Send GetSupportedDM or GetInstances request
+        Send GetSupportedDM or GetInstances request and wait for response
         
         Args:
             request_msg: GetSupportedDM or GetInstances message
             request_type: Type of request
             agent_socket: Path to agent socket
+            
+        Returns:
+            tuple: (resp_record, resp_msg) or (None, None) if error
         """
         transport = None
         try:
+            logger.info(f"Sending {request_type} request...")
+            
+            # Connect to agent's socket and send the request
             transport = UdsTransport(agent_socket, mode='connect')
             await transport.connect()
             request_record = request_msg.SerializeToString()
             await transport.send_message(request_record)
             
             logger.info(f"✓ {request_type} request sent")
+            logger.info(f"Waiting for {request_type} response from agent...")
             
-            # For now, we don't wait for response - agent will process async
-            # In production, you'd want to track these requests and handle responses
+            # Wait for response
+            response_data = await transport.receive_message()
+            if response_data:
+                # Parse the response
+                resp_record = usp_record_pb2.Record()
+                resp_record.ParseFromString(response_data)
+                
+                resp_msg = usp_msg_pb2.Msg()
+                resp_msg.ParseFromString(resp_record.no_session_context.payload)
+                
+                logger.info(f"✓ {request_type} response received from agent")
+                return resp_record, resp_msg
+            else:
+                logger.warning(f"No {request_type} response received")
+                return None, None
             
         except Exception as e:
             logger.error(f"Error sending {request_type}: {e}", exc_info=True)
+            return None, None
         finally:
             if transport:
                 await transport.close()

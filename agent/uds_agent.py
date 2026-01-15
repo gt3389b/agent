@@ -27,6 +27,8 @@ SOFTWARE.
 
 import logging
 import asyncio
+import json
+import os
 
 from agent import agent_db
 from agent import notify
@@ -77,6 +79,10 @@ class UdsAgent:
         self._controller_socket = self._db.get("Device.LocalAgent.Controller.1.MTP.1.UDS.UnixSocketPath")
         self._controller_id = self._db.get("Device.LocalAgent.Controller.1.EndpointID")
         
+        # Load data model for GetSupportedDM responses
+        self._dm_file = dm_file
+        self._data_model = self._load_data_model(dm_file)
+        
     def _find_uds_mtp(self):
         """Find UDS MTP configuration"""
         num_mtps = int(self._db.get("Device.LocalAgent.MTPNumberOfEntries"))
@@ -106,6 +112,181 @@ class UdsAgent:
                 return mtp_path, socket_path, mode
         
         raise ValueError("No UDS MTP found in database")
+    
+    def _load_data_model(self, dm_file):
+        """Load data model from JSON file"""
+        try:
+            with open(dm_file, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to load data model from {dm_file}: {e}")
+            return {}
+    
+    def _build_data_model_tree(self):
+        """
+        Build a hierarchical tree from flat dm.json structure
+        Returns dict of objects with their parameters
+        """
+        objects = {}
+        
+        for path, access in self._data_model.items():
+            # Split path into components
+            parts = path.split('.')
+            
+            # Build object path (everything except last component)
+            obj_path = '.'.join(parts[:-1]) + '.'
+            param_name = parts[-1]
+            
+            if obj_path not in objects:
+                objects[obj_path] = {
+                    'params': {},
+                    'is_multi_instance': False,
+                    'children': set()
+                }
+            
+            # Add parameter
+            objects[obj_path]['params'][param_name] = access
+            
+            # Check if this path contains {i} (multi-instance marker)
+            if '{i}' in path:
+                # Mark the object containing {i} as multi-instance
+                # Extract the object path that has {i}
+                for i, part in enumerate(parts):
+                    if '{i}' in part:
+                        mi_obj_path = '.'.join(parts[:i+1]) + '.'
+                        if mi_obj_path not in objects:
+                            objects[mi_obj_path] = {
+                                'params': {},
+                                'is_multi_instance': True,
+                                'children': set()
+                            }
+                        else:
+                            objects[mi_obj_path]['is_multi_instance'] = True
+                        break
+        
+        # Build parent-child relationships
+        for obj_path in sorted(objects.keys()):
+            # Find parent
+            parts = obj_path.rstrip('.').split('.')
+            if len(parts) > 1:
+                parent_path = '.'.join(parts[:-1]) + '.'
+                if parent_path in objects:
+                    objects[parent_path]['children'].add(obj_path)
+        
+        return objects
+    
+    def _get_first_level_children(self, obj_path, objects):
+        """
+        Get immediate child objects of a given path
+        For "Device." with first_level_only, return Device.DeviceInfo., Device.LocalAgent., etc.
+        """
+        children = set()
+        
+        # Normalize path
+        if not obj_path.endswith('.'):
+            obj_path += '.'
+        
+        # Count depth of requested path
+        requested_depth = obj_path.count('.')
+        
+        for path in objects.keys():
+            # Check if this is a child of requested path
+            if path.startswith(obj_path) and path != obj_path:
+                # Count depth
+                path_depth = path.count('.')
+                
+                # First level means exactly one level deeper
+                if path_depth == requested_depth + 1:
+                    children.add(path)
+        
+        return sorted(children)
+    
+    def _process_get_supported_dm(self, msg):
+        """
+        Process GetSupportedDM request and generate response
+        
+        Args:
+            msg: USP GetSupportedDM message
+            
+        Returns:
+            USP GetSupportedDMResp message
+        """
+        logger.info("Processing GetSupportedDM request...")
+        
+        # Build data model tree
+        objects = self._build_data_model_tree()
+        
+        # Create response message
+        resp_msg = usp_msg_pb2.Msg()
+        resp_msg.header.msg_id = msg.header.msg_id
+        resp_msg.header.msg_type = usp_msg_pb2.Header.GET_SUPPORTED_DM_RESP
+        
+        # Process each requested object path
+        get_dm = msg.body.request.get_supported_dm
+        
+        logger.info(f"  Requested paths: {list(get_dm.obj_paths)}")
+        logger.info(f"  First level only: {get_dm.first_level_only}")
+        logger.info(f"  Return commands: {get_dm.return_commands}")
+        logger.info(f"  Return events: {get_dm.return_events}")
+        logger.info(f"  Return params: {get_dm.return_params}")
+        
+        for req_path in get_dm.obj_paths:
+            result = resp_msg.body.response.get_supported_dm_resp.req_obj_results.add()
+            result.req_obj_path = req_path
+            
+            # Normalize requested path
+            if not req_path.endswith('.'):
+                req_path += '.'
+            
+            # Get objects to return
+            if get_dm.first_level_only:
+                # Return only immediate children
+                obj_paths = self._get_first_level_children(req_path, objects)
+            else:
+                # Return all descendants
+                obj_paths = [p for p in objects.keys() if p.startswith(req_path)]
+            
+            logger.info(f"  Returning {len(obj_paths)} objects for {result.req_obj_path}")
+            
+            # Build supported objects
+            for obj_path in obj_paths:
+                obj_data = objects.get(obj_path, {})
+                
+                supported_obj = result.supported_objs.add()
+                supported_obj.supported_obj_path = obj_path
+                
+                # Determine object access type
+                # For now, all objects are read-only (no add/delete support yet)
+                supported_obj.access = usp_msg_pb2.GetSupportedDMResp.OBJ_READ_ONLY
+                
+                # Set multi-instance flag
+                supported_obj.is_multi_instance = obj_data.get('is_multi_instance', False)
+                
+                # Add parameters if requested
+                if get_dm.return_params:
+                    for param_name, access in obj_data.get('params', {}).items():
+                        param = supported_obj.supported_params.add()
+                        param.param_name = param_name
+                        
+                        # Map access type
+                        if access == "readOnly":
+                            param.access = usp_msg_pb2.GetSupportedDMResp.PARAM_READ_ONLY
+                        elif access == "readWrite":
+                            param.access = usp_msg_pb2.GetSupportedDMResp.PARAM_READ_WRITE
+                        else:
+                            param.access = usp_msg_pb2.GetSupportedDMResp.PARAM_READ_ONLY
+                        
+                        # Value type - default to STRING for now
+                        param.value_type = usp_msg_pb2.GetSupportedDMResp.PARAM_STRING
+                        
+                        # Value change - parameters can be changed
+                        param.value_change = usp_msg_pb2.GetSupportedDMResp.VALUE_CHANGE_ALLOWED
+                
+                # Commands and events not supported yet
+                # (we would add them here if get_dm.return_commands or get_dm.return_events)
+        
+        logger.info("✓ GetSupportedDM response generated")
+        return resp_msg
     
     async def send_boot_notification(self):
         """Send Boot! notification to controller"""
@@ -206,6 +387,31 @@ class UdsAgent:
                 if writer:
                     await self._transport.send_message(resp_payload, writer)
                     logger.info("✓ Get response sent to controller")
+                    
+            elif msg.header.msg_type == usp_msg_pb2.Header.GET_SUPPORTED_DM:
+                logger.info("  Message Type: GET_SUPPORTED_DM")
+                
+                # Process GetSupportedDM request
+                resp_msg = self._process_get_supported_dm(msg)
+                
+                # Wrap response in USP Record
+                resp_record = usp_record_pb2.Record()
+                resp_record.version = "1.0"
+                resp_record.to_id = record.from_id
+                resp_record.from_id = self._agent_id
+                resp_record.payload_security = usp_record_pb2.Record.PLAINTEXT
+                resp_record.no_session_context.payload = resp_msg.SerializeToString()
+                
+                resp_payload = resp_record.SerializeToString()
+                
+                logger.info("✓ GetSupportedDM request processed successfully")
+                logger.info(f"  Response payload size: {len(resp_payload)} bytes")
+                
+                # Send response back to controller
+                if writer:
+                    await self._transport.send_message(resp_payload, writer)
+                    logger.info("✓ GetSupportedDM response sent to controller")
+                    
             else:
                 msg_type = msg.header.msg_type
                 logger.warning(f"Unhandled message type: {msg_type}")
