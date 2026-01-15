@@ -232,3 +232,77 @@ class BaseAgent(ABC):
             socket_path (str): Controller socket path
         """
         pass
+    
+    # ===== Common Data Model Helpers =====
+    
+    def _load_data_model(self, dm_file):
+        """Load data model from JSON file"""
+        import json
+        try:
+            with open(dm_file, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            self._logger.error(f"Failed to load data model from {dm_file}: {e}")
+            return {}
+    
+    def _build_data_model_tree(self, data_model):
+        """Build hierarchical tree from flat dm.json structure"""
+        objects = {}
+        
+        for path, access in data_model.items():
+            # Split path into components
+            parts = path.split('.')
+            
+            # Build object path (everything except last component)
+            obj_path = '.'.join(parts[:-1]) + '.'
+            param_name = parts[-1]
+            
+            if obj_path not in objects:
+                objects[obj_path] = {
+                    'params': {},
+                    'is_multi_instance': False,
+                    'children': set()
+                }
+            
+            # Add parameter
+            objects[obj_path]['params'][param_name] = access
+            
+            # Check if this path contains {i} (multi-instance marker)
+            if '{i}' in path:
+                for i, part in enumerate(parts):
+                    if '{i}' in part:
+                        mi_obj_path = '.'.join(parts[:i+1]) + '.'
+                        if mi_obj_path not in objects:
+                            objects[mi_obj_path] = {
+                                'params': {},
+                                'is_multi_instance': True,
+                                'children': set()
+                            }
+                        else:
+                            objects[mi_obj_path]['is_multi_instance'] = True
+                        break
+        
+        return objects
+    
+    def _get_first_level_children(self, obj_path, objects):
+        """Get immediate child objects of a given path"""
+        children = set()
+        
+        # Normalize path
+        if not obj_path.endswith('.'):
+            obj_path += '.'
+        
+        # Count depth of requested path
+        requested_depth = obj_path.count('.')
+        
+        for path in objects.keys():
+            # Check if this is a child of requested path
+            if path.startswith(obj_path) and path != obj_path:
+                # Count depth
+                path_depth = path.count('.')
+                
+                # First level means exactly one level deeper
+                if path_depth == requested_depth + 1:
+                    children.add(path)
+        
+        return sorted(children)

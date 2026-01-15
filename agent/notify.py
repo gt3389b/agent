@@ -39,8 +39,8 @@ SOFTWARE.
 import logging
 
 from agent import utils
-from agent import usp_msg_pb2 as usp_msg
-from agent import usp_record_pb2 as usp_record
+from message import usp_msg_pb2 as usp_msg
+from message import usp_record_pb2 as usp_record
 
 
 class Notification:

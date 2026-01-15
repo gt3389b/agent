@@ -39,8 +39,8 @@ import logging
 
 from agent import utils
 from agent import agent_db
-from agent import usp_msg_pb2 as usp_msg
-from agent import usp_record_pb2 as usp_record
+from message import usp_msg_pb2 as usp_msg
+from message import usp_record_pb2 as usp_record
 
 
 TAKE_PICTURE_CAMERA_OP = "Device.Services.HomeAutomation.1.Camera.1.TakePicture()"

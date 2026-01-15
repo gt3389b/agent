@@ -40,7 +40,7 @@ import random
 import datetime
 import subprocess
 
-from agent import usp_msg_pb2 as usp_msg
+from message import usp_msg_pb2 as usp_msg
 
 
 
