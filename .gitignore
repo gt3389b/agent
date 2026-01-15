@@ -36,3 +36,6 @@ agent/*_pb2.py
 
 # Ignore MAC Special Files
 .DS_Store
+
+# Ignore archived/deprecated code
+archive/
