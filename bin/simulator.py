@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-USP Simulator - Unified async runner for UDS Controller and Agent
+USP Simulator - Unified async runner for Controller and Agent
 Starts controller first, then agent, and manages both concurrently using asyncio
 """
 
@@ -14,7 +14,8 @@ import argparse
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from controller.uds_controller import UdsController
+from controller.controller import Controller
+from controller.northbound import ControllerNorthbound
 from agent.uds_agent import UdsAgent
 
 
@@ -29,9 +30,10 @@ logger = logging.getLogger("Simulator")
 class UspSimulator:
     """Async USP Simulator running both Controller and Agent"""
     
-    def __init__(self, transport_type='uds'):
-        self.transport_type = transport_type
+    def __init__(self, config_file='cfg/controller.json'):
+        self.config_file = config_file
         self.controller = None
+        self.northbound = None
         self.agent = None
         self.controller_task = None
         self.agent_task = None
@@ -40,12 +42,17 @@ class UspSimulator:
         """Run the controller"""
         try:
             logger.info("="*60)
-            logger.info(f"Starting {self.transport_type.upper()} Controller...")
+            logger.info("Starting USP Controller...")
             logger.info("="*60)
             
-            controller_config = f'cfg/{self.transport_type}-controller.json'
-            self.controller = UdsController(controller_config)
-            await self.controller.start()
+            self.controller = Controller(self.config_file)
+            self.northbound = ControllerNorthbound(self.controller)
+            
+            # Run both controller and northbound API concurrently
+            await asyncio.gather(
+                self.controller.start(),
+                self.northbound.start()
+            )
             
         except asyncio.CancelledError:
             logger.info("Controller task cancelled")
@@ -62,11 +69,12 @@ class UspSimulator:
             await asyncio.sleep(1)
             
             logger.info("="*60)
-            logger.info(f"Starting {self.transport_type.upper()} Agent...")
+            logger.info("Starting USP Agent...")
             logger.info("="*60)
             
-            dm_file = f"database/{self.transport_type}-dm.json"
-            db_file = f"database/{self.transport_type}-db.json"
+            # Use default UDS agent for now
+            dm_file = "database/uds-dm.json"
+            db_file = "database/uds-db.json"
             
             self.agent = UdsAgent(
                 dm_file=dm_file,
@@ -124,9 +132,9 @@ class UspSimulator:
         logger.info("Simulator stopped")
 
 
-async def main(transport_type):
+async def main(config_file):
     """Main entry point"""
-    simulator = UspSimulator(transport_type)
+    simulator = UspSimulator(config_file)
     
     # Setup signal handler for graceful shutdown
     loop = asyncio.get_running_loop()
@@ -146,14 +154,13 @@ async def main(transport_type):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='USP Simulator - Unified Controller and Agent')
-    parser.add_argument('-t', '--transport',
-                        choices=['uds', 'coap'],
-                        default='uds',
-                        help='Transport protocol to use (default: uds)')
+    parser.add_argument('-c', '--config',
+                        default='cfg/controller.json',
+                        help='Controller configuration file (default: cfg/controller.json)')
     
     args = parser.parse_args()
     
     try:
-        asyncio.run(main(args.transport))
+        asyncio.run(main(args.config))
     except KeyboardInterrupt:
         pass
