@@ -1480,7 +1480,125 @@ AttributeError: module 'asyncio' has no attribute 'coroutine'. Did you mean: 'co
 
 ---
 
-### 🟢 TODO-020: Performance Optimization
+### � TODO-022: Modernize CoAP and STOMP Agents
+**Priority**: MEDIUM  
+**Status**: Planned  
+**Goal**: Refactor CoAP and STOMP agents to use modern async BaseAgent architecture
+
+**Background**:
+- Current `coap_agent.py` and `stomp_agent.py` use old threading-based `AbstractAgent`
+- New `uds_agent.py` uses modern async/await `BaseAgent` with:
+  - `_periodic_tasks` list for tracking background asyncio tasks
+  - `_subscription_handlers` dict for managing active subscriptions
+  - `_init_subscriptions()` async method for subscription initialization
+  - `_perform_reboot()` method that cleanly restarts agent state
+- CoAP/STOMP agents lack these standardized patterns, making Device.Reboot() and other lifecycle operations inconsistent
+
+**Current State**:
+- **CoAP Agent** (`agent/coap_agent.py`):
+  - Extends `abstract_agent.AbstractAgent` (threading-based)
+  - Uses `CoapPeriodicNotifHandler(threading.Thread)`
+  - Uses `CoapValueChangeNotifPoller(threading.Thread)`
+  - Calls `init_subscriptions()` (old API, not async)
+  - No `_periodic_tasks`, `_subscription_handlers`, or `_init_subscriptions()`
+
+- **STOMP Agent** (`agent/stomp_agent.py`):
+  - Extends `abstract_agent.AbstractAgent` (threading-based)
+  - Uses `StompPeriodicNotifHandler(threading.Thread)`
+  - Uses `StompValueChangeNotifPoller(threading.Thread)`
+  - Multiple bindings via `_binding_dict`
+  - Calls `init_subscriptions()` (old API, not async)
+  - No modern async patterns
+
+**Action Plan**:
+
+1. **Create New Async Implementations**:
+   - Create `agent/coap_agent_async.py` extending `BaseAgent`
+   - Create `agent/stomp_agent_async.py` extending `BaseAgent`
+   - Follow UdsAgent pattern as reference implementation
+
+2. **Implement Required Methods**:
+   ```python
+   # Both agents must implement:
+   async def on_get_request(self, request)
+   async def on_set_request(self, request)
+   async def on_operate_request(self, request)
+   async def on_get_supported_dm_request(self, request)
+   async def on_get_instances_request(self, request)
+   async def _send_bytes(self, data, writer)
+   async def _send_notification_bytes(self, data, dest_info)
+   async def _init_subscriptions(self)
+   ```
+
+3. **Add Standard Attributes**:
+   ```python
+   self._periodic_tasks = []  # List of asyncio.Task objects
+   self._subscription_handlers = {}  # Dict tracking subscriptions
+   ```
+
+4. **Convert Threading to Asyncio**:
+   - Replace `threading.Thread` with `asyncio.Task`
+   - Replace `threading.Lock` with `asyncio.Lock`
+   - Convert blocking I/O to async/await
+   - Use `asyncio.create_task()` for background tasks
+   - Use `asyncio.gather()` for concurrent operations
+
+5. **Implement Device.Reboot()**:
+   ```python
+   async def _perform_reboot(self):
+       """Restart agent with fresh subscription handlers"""
+       # Cancel all periodic tasks
+       for task in self._periodic_tasks:
+           task.cancel()
+       await asyncio.gather(*self._periodic_tasks, return_exceptions=True)
+       
+       # Clear handlers
+       self._periodic_tasks.clear()
+       self._subscription_handlers.clear()
+       
+       # Re-initialize subscriptions
+       await self._init_subscriptions()
+   ```
+
+6. **Update Bindings**:
+   - Modify `mtp/coap_usp_binding.py` for async operation
+   - Modify `mtp/stomp_usp_binding.py` for async operation
+   - Ensure compatibility with asyncio event loop
+
+7. **Testing**:
+   - Port existing tests to async equivalents
+   - Add Device.Reboot() tests (similar to test_reboot.py)
+   - Verify Boot! and Periodic! notifications work
+   - Test subscription lifecycle management
+
+8. **Migration Strategy**:
+   - Keep old agents for backward compatibility initially
+   - Add `--async` flag to `agent/main.py` for opt-in
+   - Document migration path for users
+   - Deprecate old agents in future release
+
+**Dependencies**:
+- Modern BaseAgent architecture (✅ exists in base_agent.py)
+- UdsAgent reference implementation (✅ complete)
+- Async MTP bindings (⬜ need updates)
+
+**Benefits**:
+- Consistent agent architecture across all MTPs
+- Standard Device.Reboot() implementation
+- Better resource management (asyncio vs threading)
+- Easier to add new lifecycle operations
+- Simplified subscription management
+
+**Estimated Effort**: 40-60 hours  
+- CoAP async implementation: 20-30 hours
+- STOMP async implementation: 20-30 hours
+- Testing and validation: 10-15 hours
+
+**Risk**: Medium (significant refactoring, backward compatibility concerns)
+
+---
+
+### 🟢 TODO-023: Performance Optimization
 **Priority**: LOW  
 **Goal**: Improve throughput and latency
 
@@ -1508,7 +1626,7 @@ AttributeError: module 'asyncio' has no attribute 'coroutine'. Did you mean: 'co
    - Concurrent request processing
 
 **Estimated Effort**: 40-60 hours  
-**Dependencies**: TODO-013  
+**Dependencies**: TODO-013, TODO-022  
 **Risk**: Medium
 
 ---
@@ -1528,6 +1646,7 @@ AttributeError: module 'asyncio' has no attribute 'coroutine'. Did you mean: 'co
 8. ⬜ TODO-005: Thread shutdown
 9. ⬜ TODO-006: Shutdown coordination
 10. ⬜ TODO-014: Container improvements
+11. ⬜ TODO-022: CoAP and STOMP async modernization
 
 ### Medium-term (Next Quarter)
 11. ⬜ TODO-008: Plugin architecture
@@ -1537,7 +1656,7 @@ AttributeError: module 'asyncio' has no attribute 'coroutine'. Did you mean: 'co
 
 ### Long-term (6+ Months)
 15. ✅ TODO-019: USP spec update - **COMPLETED (TR-369 v1.4.2)**
-16. ⬜ TODO-020: Performance optimization
+16. ⬜ TODO-023: Performance optimization
 
 ### Low Priority (As Needed)
 17. ⬜ TODO-009: File cleanup

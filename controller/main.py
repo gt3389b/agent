@@ -35,11 +35,32 @@ def main_uds(config_file):
     asyncio.run(run_controller())
 
 
+def main_multi(config_file):
+    """Start Multi-MTP controller (UDS + CoAP)"""
+    import asyncio
+    from controller import multi_mtp_controller
+    from controller import northbound
+    
+    async def run_controller():
+        controller = multi_mtp_controller.MultiMtpController(config_file)
+        
+        # Start northbound API
+        nb_api = northbound.ControllerNorthbound(controller)
+        
+        # Run both controller and northbound API concurrently
+        await asyncio.gather(
+            controller.start(),
+            nb_api.start()
+        )
+    
+    asyncio.run(run_controller())
+
+
 def main():
     """Main entry point - select controller based on -t flag"""
     parser = argparse.ArgumentParser(description='USP Controller')
     parser.add_argument('-t', '--transport', 
-                        choices=['coap', 'uds'],
+                        choices=['coap', 'uds', 'multi'],
                         default='coap',
                         help='Transport protocol to use')
     
@@ -55,6 +76,8 @@ def main():
         main_uds(config_file)
     elif args.transport == 'coap':
         main_coap(config_file)
+    elif args.transport == 'multi':
+        main_multi(config_file)
     else:
         logging.error(f"Unsupported transport: {args.transport}")
         return 1

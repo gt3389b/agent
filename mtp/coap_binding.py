@@ -51,14 +51,17 @@ class CoapUspResource(resource.Resource):
             # Deserialize USP message
             python_msg, from_id, to_id = self.binding.deserialize_bytes(request.payload)
             
-            # Call message callback
+            # Call message callback - it will send response via the binding
             if self.binding._message_callback:
-                response = await self.binding._message_callback(python_msg, from_id, to_id, request)
+                # Store the request so the callback can send response back
+                self.binding._current_coap_request = request
+                self.binding._coap_response_data = None
                 
-                if response:
-                    # Serialize response
-                    response_data = self.binding.serialize_message(response, from_id)
-                    return aiocoap.Message(code=aiocoap.CHANGED, payload=response_data)
+                await self.binding._message_callback(python_msg, from_id, to_id, request)
+                
+                # Check if a response was generated
+                if self.binding._coap_response_data:
+                    return aiocoap.Message(code=aiocoap.CHANGED, payload=self.binding._coap_response_data)
             
             return aiocoap.Message(code=aiocoap.CHANGED)
             
@@ -70,21 +73,25 @@ class CoapUspResource(resource.Resource):
 class CoapUspBinding(UspBinding):
     """CoAP-specific USP Binding"""
     
-    def __init__(self, endpoint_id, listen_port=5683, resource_path='usp'):
+    def __init__(self, endpoint_id, listen_host='localhost', listen_port=5683, resource_path='usp'):
         """
         Initialize CoAP USP Binding
         
         Args:
             endpoint_id (str): Agent endpoint ID
+            listen_host (str): Host to bind to (default: localhost)
             listen_port (int): CoAP listening port
             resource_path (str): CoAP resource path for USP
         """
         super().__init__(endpoint_id)
+        self.listen_host = listen_host
         self.listen_port = listen_port
         self.resource_path = resource_path
         self.context = None
         self._message_callback = None
         self._client_context = None
+        self._current_coap_request = None  # For capturing CoAP request context
+        self._coap_response_data = None     # For capturing response data
     
     async def start_server(self, message_callback):
         """
@@ -100,12 +107,13 @@ class CoapUspBinding(UspBinding):
         root.add_resource([self.resource_path], CoapUspResource(self))
         
         # Start CoAP server
+        # Use specific host binding instead of '::' which may not work on all systems
         self.context = await aiocoap.Context.create_server_context(
             root,
-            bind=('::', self.listen_port)
+            bind=(self.listen_host, self.listen_port)
         )
         
-        self._logger.info(f"CoAP server listening on port {self.listen_port}, resource /{self.resource_path}")
+        self._logger.info(f"CoAP server listening on {self.listen_host}:{self.listen_port}, resource /{self.resource_path}")
     
     async def connect(self, server_url):
         """
@@ -123,8 +131,16 @@ class CoapUspBinding(UspBinding):
         
         Args:
             data (bytes): Serialized USP Record
-            destination (str): CoAP URL (e.g., 'coap://controller.local/usp')
+            destination: CoAP URL (str) for client mode, or CoAP request object for server response mode
         """
+        # Check if we're in server response mode (responding to an incoming request)
+        if self._current_coap_request is not None and destination == self._current_coap_request:
+            # This is a response to an incoming request - capture it for render_post to return
+            self._coap_response_data = data
+            self._logger.debug("Captured CoAP response for request")
+            return
+        
+        # Otherwise, we're in client mode - send as a POST request
         if not self._client_context:
             self._client_context = await aiocoap.Context.create_client_context()
         

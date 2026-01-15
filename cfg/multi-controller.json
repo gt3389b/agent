@@ -1,0 +1,8 @@
+{
+  "endpoint_id": "proto::controller-01",
+  "uds_socket_path": "/tmp/usp-controller.sock",
+  "uds_mode": "listen",
+  "coap_host": "localhost",
+  "coap_port": 5683,
+  "coap_path": "usp"
+}
