@@ -230,7 +230,7 @@ class BaseAgent(ABC):
     
     async def on_operate_request(self, request):
         """
-        Handle Operate request - Default implementation returns not supported
+        Handle Operate request - Default implementation handles Device.FactoryReset()
         
         Args:
             request (OperateRequest): Request with .command and .input_args
@@ -239,8 +239,46 @@ class BaseAgent(ABC):
             OperateResponse: Response with .output_args or .error
         """
         from message.response import OperateResponse
+        import asyncio
         
         self._logger.info(f"Processing Operate request: {request.command}")
+        
+        # Handle Device.FactoryReset() operation
+        if request.command == "Device.FactoryReset()":
+            try:
+                self._logger.warning("Performing factory reset - all data will be restored to defaults")
+                
+                # Perform factory reset on database
+                self._db.factory_reset()
+                
+                # Success response
+                self._logger.info("Factory reset completed successfully")
+                response = OperateResponse(
+                    msg_id=request.msg_id,
+                    command=request.command,
+                    output_args={"Status": "Success"}
+                )
+                
+                # Schedule reboot after sending response (give time for response to be sent)
+                async def delayed_reboot():
+                    await asyncio.sleep(1)
+                    self._logger.warning("Rebooting agent after factory reset...")
+                    # In a real implementation, this would trigger agent restart
+                    # For now, we'll just log it
+                    # System will need to be restarted manually
+                
+                asyncio.create_task(delayed_reboot())
+                
+                return response
+            except Exception as e:
+                self._logger.error(f"Factory reset failed: {e}")
+                return OperateResponse(
+                    msg_id=request.msg_id,
+                    command=request.command,
+                    error=(7005, f"Factory reset failed: {str(e)}")
+                )
+        
+        # Default: command not supported
         return OperateResponse(msg_id=request.msg_id, command=request.command, error=(7004, "Command not supported"))
     
     async def on_get_supported_dm_request(self, request):

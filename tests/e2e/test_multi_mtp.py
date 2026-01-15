@@ -267,7 +267,7 @@ async def test_stress_multiple_concurrent_mtps(dual_controller_setup):
 
 async def run_agent_for_seconds(seconds):
     """Run multi-MTP agent for specified duration"""
-    agent = MultiMTPAgent('database/test-dm.json', 'database/test-db.json')
+    agent = MultiMTPAgent('database/test-dm.json', 'database/runtime/test-db.json')
     try:
         await asyncio.wait_for(agent.start(), timeout=seconds)
     except asyncio.TimeoutError:

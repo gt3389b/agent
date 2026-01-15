@@ -45,6 +45,8 @@ import time
 import logging
 import datetime
 import threading
+import os
+import shutil
 # import prometheus_client
 
 from agent import utils
@@ -110,6 +112,11 @@ class Database:
             except ValueError as parse_err:
                 self._dm = {}
                 logger.error("Implemented Data Model is NOT properly formatted JSON: %s", parse_err)
+
+        # Restore from defaults if runtime database doesn't exist
+        if not os.path.exists(db_filename):
+            logger.info("Runtime database not found at %s, restoring from defaults", db_filename)
+            self._restore_from_defaults(db_filename)
 
         # Retrieve the Persisted Database
         with open(db_filename, "r") as db_in_json:
@@ -461,6 +468,86 @@ class Database:
         with self._file_write_lock:
             with open(self._db_filename, "w") as db_file:
                 json.dump(self._db, db_file, indent=4)
+
+    def _get_defaults_path(self, runtime_path):
+        """Convert runtime database path to defaults path"""
+        # Convert: database/runtime/test-db.json -> database/defaults/test-defaults.json
+        if "/runtime/" in runtime_path:
+            defaults_path = runtime_path.replace("/runtime/", "/defaults/")
+            defaults_path = defaults_path.replace("-db.json", "-defaults.json")
+            return defaults_path
+        else:
+            # Legacy path format - look for defaults file in same directory
+            base_dir = os.path.dirname(runtime_path)
+            filename = os.path.basename(runtime_path)
+            defaults_filename = filename.replace("-db.json", "-defaults.json")
+            return os.path.join(base_dir, "defaults", defaults_filename)
+
+    def _restore_from_defaults(self, runtime_path):
+        """Restore database from factory defaults"""
+        logger = logging.getLogger(self.__class__.__name__)
+        defaults_path = self._get_defaults_path(runtime_path)
+
+        if not os.path.exists(defaults_path):
+            logger.error("Factory defaults not found at %s", defaults_path)
+            raise FileNotFoundError(f"Factory defaults not found at {defaults_path}")
+
+        # Ensure runtime directory exists
+        runtime_dir = os.path.dirname(runtime_path)
+        os.makedirs(runtime_dir, exist_ok=True)
+
+        # Copy defaults to runtime
+        logger.info("Restoring database from %s to %s", defaults_path, runtime_path)
+        shutil.copy2(defaults_path, runtime_path)
+
+    def _create_backup(self):
+        """Create a timestamped backup of the current database"""
+        logger = logging.getLogger(self.__class__.__name__)
+        
+        # Determine backup directory
+        db_dir = os.path.dirname(self._db_filename)
+        if "/runtime/" in self._db_filename:
+            backup_dir = os.path.join(os.path.dirname(db_dir), "backups")
+        else:
+            backup_dir = os.path.join(db_dir, "backups")
+        
+        os.makedirs(backup_dir, exist_ok=True)
+
+        # Create timestamped backup filename
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = os.path.basename(self._db_filename)
+        backup_filename = f"{timestamp}_{filename}"
+        backup_path = os.path.join(backup_dir, backup_filename)
+
+        # Copy current database to backup
+        logger.info("Creating backup at %s", backup_path)
+        shutil.copy2(self._db_filename, backup_path)
+        return backup_path
+
+    def factory_reset(self):
+        """Reset database to factory defaults"""
+        logger = logging.getLogger(self.__class__.__name__)
+        logger.info("Performing factory reset on database %s", self._db_filename)
+
+        # Create backup before reset
+        backup_path = self._create_backup()
+        logger.info("Created backup at %s before factory reset", backup_path)
+
+        # Restore from defaults
+        self._restore_from_defaults(self._db_filename)
+
+        # Reload database from file
+        with open(self._db_filename, "r") as db_in_json:
+            try:
+                self._db = json.load(db_in_json)
+                logger.info("Database successfully reset to factory defaults")
+            except ValueError as parse_err:
+                self._db = {}
+                logger.error("Error loading database after factory reset: %s", parse_err)
+
+        # Reset uptime
+        self._start_time = time.time()
+
 
 
 class NoSuchPathError(Exception):

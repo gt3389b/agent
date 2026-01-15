@@ -330,7 +330,7 @@ async def test_error_response_on_invalid_path(controller):
 
 async def run_agent(seconds):
     """Run agent for specified duration"""
-    agent = MultiMTPAgent('database/test-dm.json', 'database/test-db.json')
+    agent = MultiMTPAgent('database/test-dm.json', 'database/runtime/test-db.json')
     try:
         await asyncio.wait_for(agent.start(), timeout=seconds)
     except asyncio.TimeoutError:

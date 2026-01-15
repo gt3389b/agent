@@ -360,7 +360,7 @@ async def test_connection_recovery(mock_controller):
 
 async def run_agent_for_seconds(seconds):
     """Run agent for specified duration"""
-    agent = MultiMTPAgent('database/test-dm.json', 'database/test-db.json')
+    agent = MultiMTPAgent('database/test-dm.json', 'database/runtime/test-db.json')
     try:
         await asyncio.wait_for(agent.start(), timeout=seconds)
     except asyncio.TimeoutError:

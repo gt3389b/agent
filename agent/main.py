@@ -74,7 +74,7 @@ class Agent:
         net_intf = args.intf
 
         dm_file_name = "database/{}-dm.json".format(client_type)
-        db_file_name = "database/{}-db.json".format(client_type)
+        db_file_name = "database/runtime/{}-db.json".format(client_type)
 
         # prometheus_client.start_http_server(9001)  # Disabled - not installed
 
