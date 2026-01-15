@@ -494,6 +494,8 @@ class UdsAgent(BaseAgent):
             
             logger.info("✓ Boot! notification sent successfully")
             
+        except (FileNotFoundError, ConnectionError) as e:
+            logger.warning(f"Controller not available at {controller_socket}: {e}")
         except Exception as e:
             logger.error(f"Failed to send Boot notification: {e}", exc_info=True)
     
@@ -569,6 +571,8 @@ class UdsAgent(BaseAgent):
             
             logger.info("✓ Periodic! notification sent successfully")
             
+        except (FileNotFoundError, ConnectionError) as e:
+            logger.warning(f"Controller not available at {controller_socket}: {e}")
         except Exception as e:
             logger.error(f"Failed to send Periodic notification: {e}", exc_info=True)
     
