@@ -73,11 +73,8 @@ class UdsAgent(BaseAgent):
         
         self._socket_path = socket_path
         self._mode = mode
-        self._periodic_task = None
-        
-        # Get controller information for Boot notification
-        self._controller_socket = self._db.get("Device.LocalAgent.Controller.1.MTP.1.UDS.UnixSocketPath")
-        self._controller_id = self._db.get("Device.LocalAgent.Controller.1.EndpointID")
+        self._periodic_tasks = []  # List of periodic notification tasks
+        self._subscription_handlers = {}  # Track active subscription handlers
         
         # Load data model for GetSupportedDM responses
         self._dm_file = dm_file
@@ -126,11 +123,8 @@ class UdsAgent(BaseAgent):
         """Start the async UDS agent"""
         logger.info(f"Agent starting on {self._socket_path}")
         
-        # Send Boot notification
-        await self.send_boot_notification()
-        
-        # Start periodic notification task
-        self._periodic_task = asyncio.create_task(self._periodic_notification_loop())
+        # Initialize subscriptions and start handlers
+        await self._init_subscriptions()
         
         # Start listening for controller messages
         await self._mtp_binding.start_server(self.handle_incoming_request)
@@ -410,44 +404,193 @@ class UdsAgent(BaseAgent):
         finally:
             await temp_transport.close()
     
-    # ===== Periodic notifications =====
+    # ===== Subscription Management =====
     
-    async def _periodic_notification_loop(self):
-        """Send periodic notifications at configured interval"""
+    async def _init_subscriptions(self):
+        """Initialize and start handlers for all enabled subscriptions"""
+        logger.info("Initializing subscriptions...")
+        
+        try:
+            subscription_instances = self._db.find_instances("Device.LocalAgent.Subscription.")
+            
+            for sub_path in subscription_instances:
+                if self._db.get(sub_path + "Enable"):
+                    await self._handle_subscription(sub_path)
+                else:
+                    subscription_id = self._db.get(sub_path + "ID")
+                    logger.info(f"Skipping disabled Subscription [{subscription_id}]")
+                    
+        except Exception as e:
+            logger.error(f"Error initializing subscriptions: {e}", exc_info=True)
+    
+    async def _handle_subscription(self, subscription_path):
+        """Handle a single subscription - start appropriate notification handler"""
+        subscription_id = self._db.get(subscription_path + "ID")
+        notif_type = self._db.get(subscription_path + "NotifType")
+        recipient_path = self._db.get(subscription_path + "Recipient")
+        
+        logger.info(f"Processing Subscription [{subscription_id}], Type: {notif_type}")
+        
+        # Check if controller is enabled
+        if not self._db.get(recipient_path + "Enable"):
+            logger.warning(f"Skipping Subscription [{subscription_id}] - controller is disabled")
+            return
+        
+        # Get controller details
+        controller_id = self._db.get(recipient_path + "EndpointID")
+        
+        # Find matching UDS MTP for this controller
+        mtp_info = self._find_controller_uds_mtp(recipient_path)
+        if not mtp_info:
+            logger.warning(f"Skipping Subscription [{subscription_id}] - no enabled UDS MTP found")
+            return
+        
+        mtp_path, socket_path = mtp_info
+        
+        # Handle based on notification type
+        if notif_type == "Event":
+            await self._handle_event_subscription(
+                subscription_path, subscription_id, controller_id, socket_path, mtp_path
+            )
+        elif notif_type == "ValueChange":
+            logger.warning(f"Subscription [{subscription_id}] - ValueChange not implemented yet")
+        else:
+            logger.warning(f"Subscription [{subscription_id}] - unsupported NotifType: {notif_type}")
+    
+    def _find_controller_uds_mtp(self, controller_path):
+        """Find enabled UDS MTP for a controller"""
+        try:
+            mtp_instances = self._db.find_instances(controller_path + "MTP.")
+            
+            for mtp_path in mtp_instances:
+                if self._db.get(mtp_path + "Enable"):
+                    protocol = self._db.get(mtp_path + "Protocol")
+                    
+                    if protocol == "UDS":
+                        socket_path = self._db.get(mtp_path + "UDS.UnixSocketPath")
+                        return (mtp_path, socket_path)
+            
+            return None
+        except Exception as e:
+            logger.error(f"Error finding controller MTP: {e}")
+            return None
+    
+    async def _handle_event_subscription(self, subscription_path, subscription_id, 
+                                        controller_id, controller_socket, mtp_path):
+        """Handle Event-type subscription (Boot!, Periodic!)"""
+        ref_list = self._db.get(subscription_path + "ReferenceList")
+        ref_events = [e.strip() for e in ref_list.split(",") if e.strip()]
+        
+        for event_path in ref_events:
+            if event_path == "Device.Boot!":
+                # Send Boot! notification immediately
+                await self._send_boot_notification(subscription_id, controller_id, controller_socket)
+                
+            elif event_path == "Device.LocalAgent.Periodic!":
+                # Start periodic notification task
+                recipient_path = self._db.get(subscription_path + "Recipient")
+                task = asyncio.create_task(
+                    self._periodic_notification_loop(
+                        subscription_id, recipient_path, controller_id, controller_socket
+                    )
+                )
+                self._periodic_tasks.append(task)
+                self._subscription_handlers[subscription_id] = {
+                    'type': 'periodic',
+                    'task': task,
+                    'controller_id': controller_id
+                }
+                logger.info(f"Started Periodic! handler for Subscription [{subscription_id}]")
+                
+            else:
+                logger.warning(f"Subscription [{subscription_id}] - unsupported event: {event_path}")
+    
+    async def _send_boot_notification(self, subscription_id, controller_id, controller_socket):
+        """Send Boot! notification to controller"""
+        try:
+            logger.info(f"Sending Boot! notification to {controller_socket}")
+            logger.info(f"  Subscription: {subscription_id}, Controller: {controller_id}")
+            
+            # Create Boot notification
+            boot_notif = notify.BootNotification(
+                self.endpoint_id,
+                controller_id,
+                subscription_id,
+                self._db
+            )
+            
+            # Generate notification message
+            notif_msg = boot_notif.generate_notif_msg()
+            
+            # Send via binding
+            await self.notify(notif_msg, controller_id, controller_socket)
+            
+            logger.info("✓ Boot! notification sent successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to send Boot notification: {e}", exc_info=True)
+    
+    # ===== Periodic Notifications =====
+    
+    async def _periodic_notification_loop(self, subscription_id, recipient_path, 
+                                         controller_id, controller_socket):
+        """
+        Send periodic notifications at configured interval for a specific subscription
+        
+        Args:
+            subscription_id (str): Subscription ID
+            recipient_path (str): Path to controller (e.g., Device.LocalAgent.Controller.1.)
+            controller_id (str): Controller endpoint ID
+            controller_socket (str): UDS socket path for controller
+        """
+        interval_param = recipient_path + "PeriodicNotifInterval"
+        
         try:
             # Wait a moment for everything to initialize
             await asyncio.sleep(1)
             
             while True:
-                # Get current interval from database
-                interval_str = self._db.get("Device.LocalAgent.Controller.1.PeriodicNotifInterval")
-                interval = int(interval_str) if interval_str else 30
-                
-                if interval > 0:
-                    # Send periodic notification
-                    await self._send_periodic_notification()
+                try:
+                    # Get current interval from database
+                    interval_str = self._db.get(interval_param)
+                    interval = int(interval_str) if interval_str else 30
                     
-                    # Wait for the interval
-                    await asyncio.sleep(interval)
-                else:
-                    # If interval is 0, periodic notifications are disabled
-                    await asyncio.sleep(10)  # Check again in 10 seconds
+                    if interval > 0:
+                        # Send periodic notification
+                        await self._send_periodic_notification(
+                            subscription_id, controller_id, controller_socket
+                        )
+                        
+                        # Wait for the interval
+                        await asyncio.sleep(interval)
+                    else:
+                        # If interval is 0, periodic notifications are disabled
+                        logger.info(f"Periodic notifications disabled for [{subscription_id}] (interval=0)")
+                        await asyncio.sleep(10)  # Check again in 10 seconds
+                        
+                except agent_db.NoSuchPathError:
+                    logger.error(f"Periodic interval parameter not found: {interval_param}")
+                    break
+                except Exception as e:
+                    logger.error(f"Error in periodic loop for [{subscription_id}]: {e}", exc_info=True)
+                    await asyncio.sleep(30)  # Wait and retry
                     
         except asyncio.CancelledError:
-            logger.info("Periodic notification task cancelled")
+            logger.info(f"Periodic notification task cancelled for [{subscription_id}]")
         except Exception as e:
-            logger.error(f"Error in periodic notification loop: {e}", exc_info=True)
+            logger.error(f"Fatal error in periodic notification loop: {e}", exc_info=True)
     
-    async def _send_periodic_notification(self):
+    async def _send_periodic_notification(self, subscription_id, controller_id, controller_socket):
         """Send Periodic! notification to controller"""
         try:
-            logger.info("Sending Periodic! notification to controller...")
+            logger.info(f"Sending Periodic! notification to controller...")
+            logger.info(f"  Subscription: {subscription_id}, Controller: {controller_id}")
             
             # Create Periodic notification
             periodic_notif = notify.PeriodicNotification(
                 self.endpoint_id,
-                self._controller_id,
-                "sub-periodic-uds-ctrl-1",
+                controller_id,
+                subscription_id,
                 self._db
             )
             
@@ -455,7 +598,7 @@ class UdsAgent(BaseAgent):
             notif_msg = periodic_notif.generate_notif_msg()
             
             # Send via notify method
-            await self.notify(notif_msg, self._controller_id, self._controller_socket)
+            await self.notify(notif_msg, controller_id, controller_socket)
             
             logger.info("✓ Periodic! notification sent successfully")
             
@@ -464,8 +607,15 @@ class UdsAgent(BaseAgent):
     
     async def stop(self):
         """Stop the agent and clean up"""
-        if self._periodic_task:
-            self._periodic_task.cancel()
+        logger.info("Stopping agent...")
+        
+        # Cancel all periodic tasks
+        for task in self._periodic_tasks:
+            task.cancel()
+        
+        # Wait for all tasks to complete
+        if self._periodic_tasks:
+            await asyncio.gather(*self._periodic_tasks, return_exceptions=True)
             
         if self._mtp_binding:
             await self._mtp_binding.close()
