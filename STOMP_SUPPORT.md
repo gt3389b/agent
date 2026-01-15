@@ -28,7 +28,7 @@ The Multi-MTP Controller now supports three transport protocols:
 
 ### Enable STOMP in Controller
 
-Edit `cfg/multi-controller.json`:
+Edit `cfg/controller.json`:
 
 ```json
 {
@@ -112,7 +112,7 @@ activemq start
 ### 2. Start Controller
 
 ```bash
-python bin/controller.py -t multi -c cfg/multi-controller.json
+python bin/controller.py -c cfg/controller.json
 ```
 
 Expected output:

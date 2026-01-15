@@ -22,7 +22,7 @@ async def test_coap_registration():
     print("=" * 80)
     
     # Start controller
-    controller = Controller('cfg/multi-controller.json')
+    controller = Controller('cfg/controller.json')
     controller_task = asyncio.create_task(controller.start())
     
     # Wait for controller to be ready

@@ -23,7 +23,7 @@ async def run_controller():
     from controller.controller import Controller
     
     ctrl_logger.info("Starting Multi-MTP Controller...")
-    controller = Controller('cfg/multi-controller.json')
+    controller = Controller('cfg/controller.json')
     
     try:
         await controller.start()

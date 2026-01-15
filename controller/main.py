@@ -13,7 +13,7 @@ def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description='USP Controller')
     parser.add_argument('-c', '--config', 
-                        default='cfg/multi-controller.json',
+                        default='cfg/controller.json',
                         help='Configuration file path')
     
     args = parser.parse_args()
