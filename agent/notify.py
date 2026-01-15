@@ -92,11 +92,13 @@ class BootNotification(Notification):
         first_entry = True
         self._init_notif(notif_msg)
 
-        # Read Boot! event parameter list from data model (TR-181 compliant format)
-        boot_event = self._data_model.get("Device.Boot!", {})
-        boot_param_list = boot_event.get("notify_params", [])
-        if not boot_param_list:
-            self._logger.warning("No parameters defined for Device.Boot! event in data model")
+        # Additional parameters to include with Boot! notification
+        boot_param_list = [
+            "Device.DeviceInfo.ManufacturerOUI",
+            "Device.DeviceInfo.ProductClass",
+            "Device.DeviceInfo.SerialNumber",
+            "Device.LocalAgent.X_ARRIS-COM_IPAddr",
+        ]
 
         notif_msg.body.request.notify.event.obj_path = "Device.LocalAgent."
         notif_msg.body.request.notify.event.event_name = "Boot!"
@@ -157,12 +159,6 @@ class PeriodicNotification(Notification):
 
         notif_msg.body.request.notify.event.obj_path = "Device.LocalAgent."
         notif_msg.body.request.notify.event.event_name = "Periodic!"
-        
-        # Read Periodic! event parameter list from data model (TR-181 compliant format)
-        periodic_event = self._data_model.get("Device.LocalAgent.Periodic!", {})
-        periodic_param_list = periodic_event.get("notify_params", [])
-        if periodic_param_list:
-            self._logger.info(f"Periodic! event has {len(periodic_param_list)} parameters defined")
-            # Future: add parameter handling here if needed
+        # Periodic! event has no additional parameters by default
 
         return notif_msg

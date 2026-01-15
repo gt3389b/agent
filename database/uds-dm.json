@@ -50,48 +50,11 @@
 	"Device.UDS.UnixSocket.{i}.Status": "readOnly",
 	"Device.UDS.UnixSocket.{i}.Path": "readWrite",
 	"Device.UDS.UnixSocket.{i}.Mode": "readWrite",
-	"Device.Boot!": {
-		"type": "event",
-		"description": "Boot event indicating that the Device was rebooted",
-		"arguments": {
-			"CommandKey": {
-				"type": "string",
-				"access": "R",
-				"description": "The command_key supplied when requesting the boot, or an empty string if the boot was not requested via a USP operation"
-			},
-			"Cause": {
-				"type": "string",
-				"access": "R",
-				"description": "The cause of the boot",
-				"enum": ["LocalReboot", "RemoteReboot", "FactoryReset", "LocalFactoryReset", "RemoteFactoryReset"]
-			},
-			"Reason": {
-				"type": "string",
-				"access": "R",
-				"description": "The reason of the boot (e.g. power on reset, watchdog, overheat, FAN fault, web userinterface, ...)"
-			},
-			"FirmwareUpdated": {
-				"type": "boolean",
-				"access": "R",
-				"description": "true if the firmware was updated as a result of the boot that caused this Event Notification; otherwise false"
-			},
-			"ParameterMap": {
-				"type": "string",
-				"access": "R",
-				"description": "Boot parameters configured via the recipient Controller's LocalAgent.Controller.{i}.BootParameter table. Formatted as a JSON Object"
-			}
-		},
-		"notify_params": [
-			"Device.DeviceInfo.ManufacturerOUI",
-			"Device.DeviceInfo.ProductClass",
-			"Device.DeviceInfo.SerialNumber",
-			"Device.LocalAgent.X_ARRIS-COM_IPAddr"
-		]
-	},
-	"Device.LocalAgent.Periodic!": {
-		"type": "event",
-		"description": "Periodic notification event sent at intervals configured in Device.LocalAgent.Controller.{i}.PeriodicNotifInterval",
-		"arguments": {},
-		"notify_params": []
-	}
+	"Device.Boot!": "event",
+	"Device.Boot!.CommandKey": "string",
+	"Device.Boot!.Cause": "string",
+	"Device.Boot!.Reason": "string",
+	"Device.Boot!.FirmwareUpdated": "boolean",
+	"Device.Boot!.ParameterMap": "string",
+	"Device.LocalAgent.Periodic!": "event"
 }
