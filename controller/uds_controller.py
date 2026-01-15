@@ -153,12 +153,27 @@ class UdsController:
             # Check if it's a Boot notification
             if event.event_name == "Boot!":
                 logger.info("✓ Boot! notification received successfully!")
-                # Track agent connection
+                
+                # Parse Boot! event parameters
+                boot_params = self._parse_boot_notification(event)
+                
+                # Track agent connection with Boot! metadata
                 self._connected_agents[record.from_id] = {
                     'last_boot': datetime.now().isoformat(),
                     'last_heartbeat': datetime.now().isoformat(),
-                    'socket_path': '/tmp/usp-agent.sock'  # TODO: get from database
+                    'socket_path': '/tmp/usp-agent.sock',  # TODO: get from database
+                    'manufacturer_oui': boot_params.get('manufacturer_oui', ''),
+                    'product_class': boot_params.get('product_class', ''),
+                    'serial_number': boot_params.get('serial_number', ''),
+                    'ip_address': boot_params.get('ip_address', ''),
+                    'boot_command_key': boot_params.get('command_key', ''),
+                    'boot_cause': boot_params.get('cause', '')
                 }
+                
+                logger.info(f"  Agent metadata: OUI={boot_params.get('manufacturer_oui')}, "
+                          f"Product={boot_params.get('product_class')}, "
+                          f"Serial={boot_params.get('serial_number')}")
+                
                 # Send Set request to configure periodic heartbeat
                 await self._configure_periodic_heartbeat(record.from_id, record.to_id)
             elif event.event_name == "Periodic!":
@@ -168,6 +183,41 @@ class UdsController:
                     self._connected_agents[record.from_id]['last_heartbeat'] = datetime.now().isoformat()
         else:
             logger.info("  Notify type: (other)")
+    
+    def _parse_boot_notification(self, event):
+        """
+        Parse Boot! notification event parameters
+        
+        Args:
+            event: USP Event message
+            
+        Returns:
+            dict: Parsed boot parameters
+        """
+        boot_params = {}
+        
+        # Extract direct parameters
+        if 'CommandKey' in event.params:
+            boot_params['command_key'] = event.params['CommandKey']
+        
+        if 'Cause' in event.params:
+            boot_params['cause'] = event.params['Cause']
+        
+        # Parse BootParameterMap (JSON string)
+        if 'BootParameterMap' in event.params:
+            try:
+                boot_map = json.loads(event.params['BootParameterMap'])
+                
+                # Extract known parameters
+                boot_params['manufacturer_oui'] = boot_map.get('Device.DeviceInfo.ManufacturerOUI', '')
+                boot_params['product_class'] = boot_map.get('Device.DeviceInfo.ProductClass', '')
+                boot_params['serial_number'] = boot_map.get('Device.DeviceInfo.SerialNumber', '')
+                boot_params['ip_address'] = boot_map.get('Device.LocalAgent.X_ARRIS-COM_IPAddr', '')
+                
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse BootParameterMap: {e}")
+        
+        return boot_params
     
     async def _send_request_and_wait(self, request_msg, request_type, agent_socket="/tmp/usp-agent.sock"):
         """
@@ -553,17 +603,25 @@ class UdsController:
     
     def get_connected_agents(self):
         """
-        Get list of connected agents
+        Get list of connected agents with metadata
         
         Returns:
-            list: [{"agent_id": ..., "last_boot": ..., "last_heartbeat": ...}, ...]
+            list: [{"agent_id": ..., "last_boot": ..., "last_heartbeat": ..., 
+                   "manufacturer_oui": ..., "product_class": ..., "serial_number": ..., 
+                   "ip_address": ..., "boot_cause": ...}, ...]
         """
         agents = []
         for agent_id, info in self._connected_agents.items():
             agents.append({
                 'agent_id': agent_id,
                 'last_boot': info['last_boot'],
-                'last_heartbeat': info['last_heartbeat']
+                'last_heartbeat': info['last_heartbeat'],
+                'manufacturer_oui': info.get('manufacturer_oui', ''),
+                'product_class': info.get('product_class', ''),
+                'serial_number': info.get('serial_number', ''),
+                'ip_address': info.get('ip_address', ''),
+                'boot_cause': info.get('boot_cause', ''),
+                'boot_command_key': info.get('boot_command_key', '')
             })
         return agents
     

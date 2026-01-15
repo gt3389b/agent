@@ -44,7 +44,7 @@
     "Device.LocalAgent.Controller.1.Alias": "uds-local-controller",
     "Device.LocalAgent.Controller.1.EndpointID": "proto::controller-01",
     "Device.LocalAgent.Controller.1.ProvisioningCode": "",
-    "Device.LocalAgent.Controller.1.PeriodicNotifInterval": "20",
+    "Device.LocalAgent.Controller.1.PeriodicNotifInterval": "30",
     "Device.LocalAgent.Controller.1.PeriodicNotifTime": "__CURRENT_TIME__",
     "Device.LocalAgent.Controller.1.MTPNumberOfEntries": "__NUM_ENTRIES__",
     "Device.LocalAgent.Controller.1.MTP.1.Enable": true,

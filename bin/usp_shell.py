@@ -196,8 +196,20 @@ class UspShell:
         for agent in agents:
             current = " (current)" if agent['agent_id'] == self.agent_id else ""
             print(f"\n  🤖 {agent['agent_id']}{current}")
-            print(f"     Boot time: {agent['last_boot']}")
-            print(f"     Last seen: {agent['last_heartbeat']}")
+            print(f"     Boot time:    {agent['last_boot']}")
+            print(f"     Last seen:    {agent['last_heartbeat']}")
+            
+            # Show device metadata if available
+            if agent.get('manufacturer_oui'):
+                print(f"     OUI:          {agent['manufacturer_oui']}")
+            if agent.get('product_class'):
+                print(f"     Product:      {agent['product_class']}")
+            if agent.get('serial_number'):
+                print(f"     Serial:       {agent['serial_number']}")
+            if agent.get('ip_address'):
+                print(f"     IP Address:   {agent['ip_address']}")
+            if agent.get('boot_cause'):
+                print(f"     Boot Cause:   {agent['boot_cause']}")
     
     async def cmd_help(self, args):
         """Show help"""
