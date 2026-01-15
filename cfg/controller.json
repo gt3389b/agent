@@ -12,6 +12,12 @@
       "port": 5683,
       "path": "usp"
     },
+    "websocket": {
+      "enabled": true,
+      "host": "localhost",
+      "port": 8080,
+      "path": "/usp"
+    },
     "stomp": {
       "enabled": false,
       "host": "localhost",

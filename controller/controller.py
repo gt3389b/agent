@@ -31,11 +31,13 @@ import logging
 import json
 import asyncio
 from datetime import datetime
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Set as TypingSet
 
 import aiocoap
 import aiocoap.resource as resource
 import stomp
+import websockets
+from websockets.server import serve
 
 from mtp.uds import UdsTransport
 from mtp.coap_binding import CoapUspBinding
@@ -88,6 +90,15 @@ class Controller:
         self._coap_binding = None
         self._coap_context = None
         
+        # WebSocket configuration
+        ws_config = mtp_config.get('websocket', {})
+        self._websocket_enabled = ws_config.get('enabled', False)
+        self._websocket_host = ws_config.get('host', 'localhost')
+        self._websocket_port = ws_config.get('port', 8080)
+        self._websocket_path = ws_config.get('path', '/usp')
+        self._websocket_server = None
+        self._websocket_clients: TypingSet[websockets.WebSocketServerProtocol] = set()
+        
         # STOMP configuration
         stomp_config = mtp_config.get('stomp', {})
         self._stomp_enabled = stomp_config.get('enabled', False)
@@ -101,8 +112,8 @@ class Controller:
         
         # Agent tracking - stores MTP info for each agent
         # Format: agent_id -> {
-        #   'mtp_type': 'uds' | 'coap' | 'stomp',
-        #   'mtp_info': socket_path | coap_url | stomp_reply_queue,
+        #   'mtp_type': 'uds' | 'coap' | 'websocket' | 'stomp',
+        #   'mtp_info': socket_path | coap_url | ws_connection | stomp_reply_queue,
         #   'last_boot': timestamp,
         #   'last_heartbeat': timestamp,
         #   'metadata': {...}
@@ -120,6 +131,8 @@ class Controller:
             logger.info(f"  UDS: {self._uds_socket_path} (mode={self._uds_mode})")
         if self._coap_enabled:
             logger.info(f"  CoAP: {self._coap_host}:{self._coap_port}/{self._coap_path}")
+        if self._websocket_enabled:
+            logger.info(f"  WebSocket: {self._websocket_host}:{self._websocket_port}{self._websocket_path}")
         if self._stomp_enabled:
             logger.info(f"  STOMP: {self._stomp_host}:{self._stomp_port}")
             logger.info(f"    Controller Queue: {self._stomp_controller_queue}")
@@ -140,6 +153,11 @@ class Controller:
         if self._coap_enabled:
             logger.info(f"Starting CoAP listener on {self._coap_host}:{self._coap_port}/{self._coap_path}")
             tasks.append(asyncio.create_task(self._run_coap_server()))
+        
+        # Start WebSocket listener if enabled
+        if self._websocket_enabled:
+            logger.info(f"Starting WebSocket listener on {self._websocket_host}:{self._websocket_port}{self._websocket_path}")
+            tasks.append(asyncio.create_task(self._run_websocket_server()))
         
         # Start STOMP listener if enabled
         if self._stomp_enabled:
@@ -220,6 +238,39 @@ class Controller:
         finally:
             if self._stomp_connection and self._stomp_connection.is_connected():
                 self._stomp_connection.disconnect()
+    
+    async def _run_websocket_server(self):
+        """Run the WebSocket server"""
+        try:
+            async with serve(
+                self._handle_websocket_connection,
+                self._websocket_host,
+                self._websocket_port,
+                subprotocols=['v1.usp']
+            ) as server:
+                self._websocket_server = server
+                logger.info(f"✓ WebSocket server listening on ws://{self._websocket_host}:{self._websocket_port}{self._websocket_path}")
+                await asyncio.Future()  # Run forever
+        except Exception as e:
+            logger.error(f"WebSocket server error: {e}", exc_info=True)
+    
+    async def _handle_websocket_connection(self, websocket):
+        """Handle a WebSocket connection from an agent"""
+        try:
+            # Add client to set
+            self._websocket_clients.add(websocket)
+            logger.info(f"WebSocket client connected from {websocket.remote_address}")
+            
+            # Process messages from this client
+            async for message in websocket:
+                await self._handle_websocket_message(message, websocket)
+        except websockets.exceptions.ConnectionClosed:
+            logger.info(f"WebSocket client disconnected from {websocket.remote_address}")
+        except Exception as e:
+            logger.error(f"WebSocket connection error: {e}", exc_info=True)
+        finally:
+            # Remove client from set
+            self._websocket_clients.discard(websocket)
     
     async def _handle_uds_message(self, data, writer):
         """
@@ -385,17 +436,60 @@ class Controller:
         except Exception as e:
             logger.error(f"Error handling STOMP message: {e}", exc_info=True)
     
+    async def _handle_websocket_message(self, data, websocket):
+        """
+        Handle received USP message from WebSocket transport
+        
+        Args:
+            data (bytes): Raw message data
+            websocket: WebSocket connection object
+        """
+        try:
+            # Parse USP Record
+            record = usp_record_pb2.Record()
+            record.ParseFromString(data)
+            
+            agent_id = record.from_id
+            
+            # Track this agent as using WebSocket transport
+            if agent_id not in self._connected_agents:
+                self._connected_agents[agent_id] = {
+                    'mtp_type': 'websocket',
+                    'mtp_info': websocket,  # Store WebSocket connection
+                    'last_heartbeat': datetime.now().isoformat(),
+                    'metadata': {
+                        'remote_address': str(websocket.remote_address)
+                    }
+                }
+            else:
+                # Update MTP info in case connection changed
+                self._connected_agents[agent_id]['mtp_type'] = 'websocket'
+                self._connected_agents[agent_id]['mtp_info'] = websocket
+            
+            # Update last heartbeat
+            self._connected_agents[agent_id]['last_heartbeat'] = datetime.now().isoformat()
+            
+            # Process the message and get response
+            response_data = await self._process_message(record, websocket, 'websocket')
+            
+            # Send response back over WebSocket if we have one
+            if response_data:
+                await websocket.send(response_data)
+            
+        except Exception as e:
+            logger.error(f"Error handling WebSocket message: {e}", exc_info=True)
+    
     async def _process_message(self, record, writer_or_request, mtp_type):
         """
-        Process USP message (common logic for UDS, CoAP, and STOMP)
+        Process USP message (common logic for all MTPs)
         
         Args:
             record: USP Record protobuf
-            writer_or_request: Stream writer (UDS) or CoAP request (or None for STOMP)
-            mtp_type: 'uds' | 'coap' | 'stomp'
+            writer_or_request: Stream writer (UDS), CoAP request, WebSocket connection, or None (STOMP)
+            mtp_type: 'uds' | 'coap' | 'websocket' | 'stomp'
         
         Returns:
-            Optional[bytes]: Response data for CoAP, None for UDS
+            Optional[bytes]: Response data for CoAP/WebSocket, None for UDS/STOMP
         """
         logger.info("=" * 60)
         logger.info(f"RECEIVED USP RECORD via {mtp_type.upper()}:")
@@ -606,6 +700,8 @@ class Controller:
             return await self._send_request_uds(request_msg, mtp_info, request_type)
         elif mtp_type == 'coap':
             return await self._send_request_coap(request_msg, mtp_info, request_type)
+        elif mtp_type == 'websocket':
+            return await self._send_request_websocket(request_msg, mtp_info, request_type)
         elif mtp_type == 'stomp':
             return await self._send_request_stomp(request_msg, mtp_info, request_type)
         else:
@@ -685,6 +781,47 @@ class Controller:
             
         except Exception as e:
             logger.error(f"Error sending {request_type} via CoAP: {e}", exc_info=True)
+            return None, None
+    
+    async def _send_request_websocket(self, request_msg, websocket, request_type):
+        """
+        Send request via WebSocket
+        
+        Args:
+            request_msg: USP Record protobuf
+            websocket: WebSocket connection object
+            request_type: Type of request for logging
+            
+        Returns:
+            tuple: (resp_record, resp_msg) or (None, None) if error
+        """
+        try:
+            # Serialize request
+            request_record = request_msg.SerializeToString()
+            
+            # Send via WebSocket
+            await websocket.send(request_record)
+            logger.info(f"✓ {request_type} request sent via WebSocket")
+            
+            # Wait for response
+            response_data = await websocket.recv()
+            
+            if response_data:
+                # Parse the response
+                resp_record = usp_record_pb2.Record()
+                resp_record.ParseFromString(response_data)
+                
+                resp_msg = usp_msg_pb2.Msg()
+                resp_msg.ParseFromString(resp_record.no_session_context.payload)
+                
+                logger.info(f"✓ {request_type} response received via WebSocket")
+                return resp_record, resp_msg
+            else:
+                logger.warning(f"No {request_type} response received via WebSocket")
+                return None, None
+            
+        except Exception as e:
+            logger.error(f"Error sending {request_type} via WebSocket: {e}", exc_info=True)
             return None, None
     
     async def _send_request_stomp(self, request_msg, agent_queue, request_type):
