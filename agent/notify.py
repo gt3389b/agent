@@ -79,10 +79,11 @@ class Notification:
 
 class BootNotification(Notification):
     """Encapsulates a Boot USP Notification"""
-    def __init__(self, from_id, to_id, subscription_id, db):
+    def __init__(self, from_id, to_id, subscription_id, db, data_model):
         """Initialize the Notification Type"""
         Notification.__init__(self, from_id, to_id, subscription_id)
         self._db = db
+        self._data_model = data_model
 
     def generate_notif_msg(self):
         """Generate an appropriate USP Notification"""
@@ -91,11 +92,10 @@ class BootNotification(Notification):
         first_entry = True
         self._init_notif(notif_msg)
 
-        # TODO: Replace hard-coded list with data model driven list
-        boot_param_list = ["Device.DeviceInfo.ManufacturerOUI",
-                           "Device.DeviceInfo.ProductClass",
-                           "Device.DeviceInfo.SerialNumber",
-                           "Device.LocalAgent.X_ARRIS-COM_IPAddr"]
+        # Read parameter list from data model (TR-369 compliant)
+        boot_param_list = self._data_model.get("__EVENTS__", {}).get("Device.Boot!", {}).get("parameters", [])
+        if not boot_param_list:
+            self._logger.warning("No parameters defined for Device.Boot! event in data model")
 
         notif_msg.body.request.notify.event.obj_path = "Device.LocalAgent."
         notif_msg.body.request.notify.event.event_name = "Boot!"
@@ -144,10 +144,10 @@ class ValueChangeNotification(Notification):
 
 class PeriodicNotification(Notification):
     """Encapsulates a Periodic USP Notification"""
-    def __init__(self, from_id, to_id, subscription_id, param):
+    def __init__(self, from_id, to_id, subscription_id, data_model):
         """Initialize the Notification Type"""
         Notification.__init__(self, from_id, to_id, subscription_id)
-        self._param = param
+        self._data_model = data_model
 
     def generate_notif_msg(self):
         """Generate an appropriate USP Notification"""
@@ -156,5 +156,12 @@ class PeriodicNotification(Notification):
 
         notif_msg.body.request.notify.event.obj_path = "Device.LocalAgent."
         notif_msg.body.request.notify.event.event_name = "Periodic!"
+        
+        # Read parameter list from data model (TR-369 compliant)
+        # Currently Periodic! has no parameters, but could be extended
+        periodic_param_list = self._data_model.get("__EVENTS__", {}).get("Device.LocalAgent.Periodic!", {}).get("parameters", [])
+        if periodic_param_list:
+            self._logger.info(f"Periodic! event has {len(periodic_param_list)} parameters defined")
+            # Future: add parameter handling here if needed
 
         return notif_msg

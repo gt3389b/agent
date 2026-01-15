@@ -145,7 +145,8 @@ class UdsAgent(BaseAgent):
                 self.endpoint_id,
                 self._controller_id,
                 "sub-boot-uds-ctrl-1",
-                self._db
+                self._db,
+                self._data_model
             )
             
             # Generate notification message
@@ -516,7 +517,8 @@ class UdsAgent(BaseAgent):
                 self.endpoint_id,
                 controller_id,
                 subscription_id,
-                self._db
+                self._db,
+                self._data_model
             )
             
             # Generate notification message
@@ -591,7 +593,7 @@ class UdsAgent(BaseAgent):
                 self.endpoint_id,
                 controller_id,
                 subscription_id,
-                self._db
+                self._data_model
             )
             
             # Generate notification message

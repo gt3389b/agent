@@ -49,5 +49,18 @@
 	"Device.UDS.UnixSocket.{i}.Alias": "readWrite",
 	"Device.UDS.UnixSocket.{i}.Status": "readOnly",
 	"Device.UDS.UnixSocket.{i}.Path": "readWrite",
-	"Device.UDS.UnixSocket.{i}.Mode": "readWrite"
+	"Device.UDS.UnixSocket.{i}.Mode": "readWrite",
+	"__EVENTS__": {
+		"Device.Boot!": {
+			"parameters": [
+				"Device.DeviceInfo.ManufacturerOUI",
+				"Device.DeviceInfo.ProductClass",
+				"Device.DeviceInfo.SerialNumber",
+				"Device.LocalAgent.X_ARRIS-COM_IPAddr"
+			]
+		},
+		"Device.LocalAgent.Periodic!": {
+			"parameters": []
+		}
+	}
 }
