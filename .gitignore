@@ -28,6 +28,11 @@ database/*.db
 database/*.db-orig
 database/*.db-sizing
 
+# Ignore runtime databases and backups (defaults are tracked)
+database/runtime/
+database/backups/
+database/*.backup
+
 # Ignore the pictures
 pictures/
 
