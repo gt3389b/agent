@@ -9,29 +9,20 @@ database/
 ├── defaults/           # Factory defaults (version controlled)
 │   ├── test-defaults.json
 │   ├── camera-defaults.json
-│   ├── motion-defaults.json
-│   ├── coap-defaults.json
-│   ├── uds-defaults.json
-│   └── websocket-defaults.json
+│   └── motion-defaults.json
 │
 ├── runtime/            # Working databases (.gitignored)
 │   ├── test-db.json
 │   ├── camera-db.json
-│   ├── motion-db.json
-│   ├── coap-db.json
-│   ├── uds-db.json
-│   └── websocket-db.json
+│   └── motion-db.json
 │
 ├── backups/            # Timestamped backups (.gitignored)
 │   └── test-db.2026-01-15T10-30-00.json
 │
 └── *-dm.json           # Data models (schemas, version controlled)
-    ├── test-dm.json
+    ├── test-dm.json       # Multi-MTP agent (WebSocket, CoAP, UDS)
     ├── camera-dm.json
-    ├── motion-dm.json
-    ├── coap-dm.json
-    ├── uds-dm.json
-    └── websocket-dm.json
+    └── motion-dm.json
 ```
 
 ## File Types
