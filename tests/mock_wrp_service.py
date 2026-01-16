@@ -78,8 +78,12 @@ class MockWrpService:
                 result = self._handle_set(jsonrpc_request)
             elif method == "getAttributes":
                 result = self._handle_get_attributes(jsonrpc_request)
+            elif method == "getInstances":
+                result = self._handle_get_instances(jsonrpc_request)
             elif method == "operate":
                 result = self._handle_operate(jsonrpc_request)
+            elif method.startswith("Device."):  # Direct command invocation (e.g., Device.FactoryReset)
+                result = self._handle_command(method, jsonrpc_request)
             elif method == "add":
                 result = self._handle_add(jsonrpc_request)
             elif method == "delete":
@@ -197,6 +201,32 @@ class MockWrpService:
             "supported_objects": supported_objects
         }
     
+    def _handle_get_instances(self, request: Dict) -> Dict:
+        """Handle JSON-RPC getInstances request"""
+        params = request.get("params", {})
+        obj_path = params.get("objectPath", "")
+        
+        logger.info(f"   GetInstances for path: {obj_path}")
+        
+        # Find instances in database
+        instances = []
+        if obj_path:
+            # Look for instance numbers in database paths
+            for db_path in self.db._db.keys():
+                if db_path.startswith(obj_path):
+                    # Extract instance path (e.g., Device.LocalAgent.MTP.1.)
+                    parts = db_path[len(obj_path):].split('.')
+                    if parts and parts[0].isdigit():
+                        instance_path = obj_path + parts[0] + '.'
+                        if instance_path not in instances:
+                            instances.append(instance_path)
+        
+        logger.info(f"   Found {len(instances)} instances: {instances}")
+        
+        return {
+            "instances": {obj_path: instances}
+        }
+    
     def _handle_operate(self, request: Dict) -> Dict:
         """Handle JSON-RPC operate request"""
         command = request.get("params", {}).get("command")
@@ -208,17 +238,72 @@ class MockWrpService:
         if command == "Device.Reboot()":
             return {
                 "status": "success",
+                "output_args": {},
                 "message": "Reboot scheduled"
             }
         elif command == "Device.FactoryReset()":
             return {
                 "status": "success",
+                "output_args": {},
                 "message": "Factory reset initiated"
             }
         else:
             return {
                 "status": "success",
-                "output": f"Command {command} executed"
+                "output_args": {},
+                "message": f"Command {command} executed"
+            }
+    
+    def _handle_command(self, method_name: str, request: Dict) -> Dict:
+        """Handle direct command invocation (WRP-style)"""
+        params = request.get("params", {})
+        
+        logger.info(f"   Execute command: {method_name} with params {params}")
+        
+        # Factory Reset implementation
+        if method_name == "Device.FactoryReset":
+            logger.warning("   🔧 FACTORY RESET: Resetting all writable parameters to defaults")
+            
+            # Reset writable parameters to default values
+            reset_count = 0
+            for path, access in self.db._dm.items():
+                if access == "readWrite" and path in self.db._db:
+                    # Reset to reasonable defaults
+                    if "Enable" in path:
+                        self.db.update(path, "false")
+                    elif "Alias" in path:
+                        self.db.update(path, "")
+                    elif "SoftwareVersion" in path:
+                        self.db.update(path, "1.0.0")
+                    else:
+                        self.db.update(path, "")
+                    reset_count += 1
+            
+            logger.warning(f"   ✅ Factory reset complete: {reset_count} parameters reset")
+            
+            return {
+                "command": method_name + "()",
+                "output_args": {
+                    "ResetCount": str(reset_count)
+                },
+                "error": None
+            }
+        
+        # Device Reboot
+        elif method_name == "Device.Reboot":
+            logger.info("   🔄 REBOOT: Device reboot scheduled")
+            return {
+                "command": method_name + "()",
+                "output_args": {},
+                "error": None
+            }
+        
+        # Unknown command
+        else:
+            return {
+                "command": method_name + "()",
+                "output_args": {},
+                "error": None
             }
     
     def _handle_add(self, request: Dict) -> Dict:

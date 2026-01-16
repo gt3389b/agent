@@ -296,25 +296,27 @@ class BridgeAgent:
         """Handle GetInstances request"""
         local_paths, remote_paths = self._split_paths(request.obj_paths)
         
-        results = []
+        instances = {}
         
         # Get local instances via bridge (internal)
         if local_paths:
             local_req = GetInstancesRequest(
                 obj_paths=local_paths, msg_id=request.msg_id
             )
-            local_results = await self._bridge_request(local_req, controller_context, internal=True)
-            results.extend(local_results)
+            local_response = await self._bridge_request(local_req, controller_context, internal=True)
+            if hasattr(local_response, 'instances'):
+                instances.update(local_response.instances)
         
         # Get backend instances
         if remote_paths:
             backend_req = GetInstancesRequest(
                 obj_paths=remote_paths, msg_id=request.msg_id
             )
-            backend_results = await self._bridge_request(backend_req, controller_context)
-            results.extend(backend_results)
+            backend_response = await self._bridge_request(backend_req, controller_context)
+            if hasattr(backend_response, 'instances'):
+                instances.update(backend_response.instances)
         
-        return GetInstancesResponse(msg_id=request.msg_id, results=results)
+        return GetInstancesResponse(msg_id=request.msg_id, instances=instances)
     
     # =========================================================================
     # Backend Bridge Communication (TX/RX Channels)
@@ -453,7 +455,9 @@ class BridgeAgent:
         elif operation == "operate":
             return OperateResponse(
                 msg_id=request.msg_id,
-                result=data.get("result", {})
+                command=data.get("command", ""),
+                output_args=data.get("output_args", {}),
+                error=data.get("error")
             )
         elif operation == "add":
             # Placeholder response for Add (not yet in message module)
@@ -476,7 +480,7 @@ class BridgeAgent:
         elif operation == "get_instances":
             return GetInstancesResponse(
                 msg_id=request.msg_id,
-                results=data.get("results", [])
+                instances=data.get("instances", {})
             )
         else:
             raise ValueError(f"Unknown operation type: {operation}")

@@ -210,19 +210,54 @@ class SimpleController:
                     }
                 }
             
-            elif method == 'operate':
-                # Execute command
-                command = params.get('command')
-                args = params.get('args', {})
-                logger.info(f"   Forwarding Operate request to agent: {command}")
+            elif method == 'get_instances':
+                # Query object instances
+                obj_paths = params.get('obj_paths', [])
+                logger.info(f"   Forwarding GetInstances request to agent: {obj_paths}")
                 
-                # TODO: Implement operate
+                from message.request import GetInstancesRequest
+                
+                gi_req = GetInstancesRequest(
+                    msg_id=f"ctrl-{req_id}",
+                    obj_paths=obj_paths,
+                    first_level_only=params.get('first_level_only', False)
+                )
+                
+                gi_resp = await self.agent.handle_get_instances(gi_req, controller_ctx)
+                
                 return {
                     "jsonrpc": "2.0",
                     "id": req_id,
-                    "error": {
-                        "code": -32601,
-                        "message": "Method not implemented: operate"
+                    "result": {
+                        "status": "success",
+                        "instances": gi_resp.instances
+                    }
+                }
+            
+            elif method == 'operate':
+                # Execute command
+                command = params.get('command')
+                input_args = params.get('input_args', {})
+                logger.info(f"   Forwarding Operate request to agent: {command}")
+                
+                from message.request import OperateRequest
+                
+                op_req = OperateRequest(
+                    msg_id=f"ctrl-{req_id}",
+                    command=command,
+                    input_args=input_args
+                )
+                
+                op_resp = await self.agent.handle_operate(op_req, controller_ctx)
+                
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "status": "success" if not op_resp.error else "error",
+                        "command": op_resp.command,
+                        "output_args": op_resp.output_args,
+                        "error": op_resp.error
                     }
                 }
             
@@ -477,6 +512,53 @@ async def test_complete_flow():
                 # Show a few parameters
                 sample_params = list(obj_info['parameters'].keys())[:5]
                 print(f"   Sample: {', '.join(sample_params)}\n")
+        
+        # Test 8: GetInstances - Query object instances
+        print("=" * 80)
+        print("Test 8: GetInstances - Query multi-instance objects")
+        print("=" * 80)
+        response = await client.send_request(
+            method="get_instances",
+            params={
+                "obj_paths": ["Device.LocalAgent.MTP."]
+            },
+            req_id=8
+        )
+        if 'error' in response:
+            print(f"⚠️  GetInstances error: {response['error']['message']}\n")
+        else:
+            instances = response['result'].get('instances', {}).get('Device.LocalAgent.MTP.', [])
+            print(f"✅ Result: Found {len(instances)} MTP instances")
+            if instances:
+                print(f"   Instances: {', '.join(instances[:3])}\n")
+            else:
+                print("   (No instances found)\n")
+        
+        # Test 9: Operate - Factory Reset
+        print("=" * 80)
+        print("Test 9: Operate - Device.FactoryReset() command")
+        print("=" * 80)
+        response = await client.send_request(
+            method="operate",
+            params={
+                "command": "Device.FactoryReset()",
+                "input_args": {}
+            },
+            req_id=9
+        )
+        if 'error' in response:
+            print(f"⚠️  Operate error: {response['error']['message']}\n")
+        else:
+            result = response['result']
+            if result.get('error'):
+                print(f"⚠️  Command failed: {result['error']}\n")
+            else:
+                output_args = result.get('output_args', {})
+                print(f"✅ Result: Factory reset executed successfully")
+                if 'ResetCount' in output_args:
+                    print(f"   Reset {output_args['ResetCount']} parameters\n")
+                else:
+                    print("   Command completed\n")
         
     finally:
         await client.close()
