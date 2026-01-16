@@ -165,6 +165,10 @@ class Database:
             self._save()
         else:
             raise NoSuchPathError(path)
+    
+    def set(self, path, value):
+        """Alias for update() - change the value of the incoming path"""
+        return self.update(path, value)
 
     # @DB_FIND_PARAMS_SUMMARY_METRIC.time()
     def find_params(self, path):

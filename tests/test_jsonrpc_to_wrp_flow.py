@@ -17,6 +17,7 @@ import os
 import sys
 import socket
 from pathlib import Path
+import pytest
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -157,12 +158,30 @@ class SimpleController:
                 
                 set_resp = await self.agent.handle_set(set_req, controller_ctx)
                 
+                # Build results from updated_params and failed_params
+                results = []
+                for path, value in set_resp.updated_params.items():
+                    results.append({
+                        "path": path,
+                        "status": "success",
+                        "value": value
+                    })
+                for path, (err_code, err_msg) in set_resp.failed_params.items():
+                    results.append({
+                        "path": path,
+                        "status": "error",
+                        "error_code": err_code,
+                        "error_message": err_msg
+                    })
+                
                 return {
                     "jsonrpc": "2.0",
                     "id": req_id,
                     "result": {
                         "status": "success",
-                        "parameters": set_resp.results
+                        "updated_params": set_resp.updated_params,
+                        "failed_params": set_resp.failed_params,
+                        "results": results  # Convenience list format
                     }
                 }
             
@@ -254,6 +273,7 @@ class UDSClient:
             logger.info("🔌 Client disconnected")
 
 
+@pytest.mark.asyncio
 async def test_complete_flow():
     """
     Test complete JSON-RPC → Controller → BridgeAgent → MockWRP flow

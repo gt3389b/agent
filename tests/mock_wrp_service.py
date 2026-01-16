@@ -134,31 +134,29 @@ class MockWrpService:
         """Handle JSON-RPC set request using real Database"""
         params = request.get("params", {}).get("parameters", [])
         
-        results = []
+        updated_params = {}
+        failed_params = {}
+        
         for param in params:
             name = param.get("name")
             value = param.get("value")
             
             try:
-                # Use real Database.set()
+                # Use real Database.update()
                 old_value = self.db.get(name)
-                self.db.set(name, value)
+                self.db.update(name, value)
                 
                 logger.info(f"   Set {name}: {old_value} → {value}")
                 
-                results.append({
-                    "path": name,
-                    "status": "success"
-                })
+                updated_params[name] = value
             except Exception as e:
-                results.append({
-                    "path": name,
-                    "status": "error",
-                    "error": str(e)
-                })
                 logger.warning(f"   Set {name} failed: {e}")
+                failed_params[name] = (7002, str(e))  # 7002 = Invalid parameter
         
-        return {"results": results}
+        return {
+            "updated_params": updated_params,
+            "failed_params": failed_params
+        }
     
     def _handle_operate(self, request: Dict) -> Dict:
         """Handle JSON-RPC operate request"""

@@ -177,6 +177,9 @@ class BridgeAgent:
             
         local_params, remote_params = self._split_set_params(params_list)
         
+        updated_params = {}
+        failed_params = {}
+        
         # Handle local parameters via bridge (using agent's own endpoint)
         if local_params:
             local_req = SetRequest(parameters={p["path"]: p["value"] for p in local_params}, 
@@ -184,19 +187,26 @@ class BridgeAgent:
             local_response = await self._bridge_request(
                 local_req, controller_context, internal=True
             )
-            if hasattr(local_response, 'results'):
-                results.extend(local_response.results)
+            if hasattr(local_response, 'updated_params'):
+                updated_params.update(local_response.updated_params)
+            if hasattr(local_response, 'failed_params'):
+                failed_params.update(local_response.failed_params)
         
         # Bridge remote parameters to backend
         if remote_params:
             backend_req = SetRequest(parameters={p["path"]: p["value"] for p in remote_params}, 
                                     msg_id=request.msg_id)
-            backend_results = await self._bridge_request(
+            backend_response = await self._bridge_request(
                 backend_req, controller_context
             )
-            results.extend(backend_results)
+            if hasattr(backend_response, 'updated_params'):
+                updated_params.update(backend_response.updated_params)
+            if hasattr(backend_response, 'failed_params'):
+                failed_params.update(backend_response.failed_params)
         
-        return SetResponse(msg_id=request.msg_id, results=results)
+        return SetResponse(msg_id=request.msg_id, 
+                          updated_params=updated_params,
+                          failed_params=failed_params)
     
     async def handle_operate(self, request: OperateRequest,
                             controller_context: Any) -> OperateResponse:
@@ -435,7 +445,8 @@ class BridgeAgent:
         elif operation == "set":
             return SetResponse(
                 msg_id=request.msg_id,
-                results=data.get("results", [])
+                updated_params=data.get("updated_params", {}),
+                failed_params=data.get("failed_params", {})
             )
         elif operation == "operate":
             return OperateResponse(
