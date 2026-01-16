@@ -469,20 +469,82 @@ class BridgeAgent:
         """
         Send Boot! event
         
-        Agent owns Boot! event generation - this is not bridged.
-        """
-        boot_event = {
-            "event": "Boot!",
-            "obj_path": "Device.LocalAgent.",
-            "params": {
-                "BootTime": int(self._boot_time),
-                "Cause": "LocalReboot",
-                "CommandKey": ""
-            }
-        }
+        Agent owns Boot! event generation but queries necessary boot parameters
+        from the bridge to populate the event with device information.
         
-        logger.info(f"Boot! event: {boot_event}")
+        Boot! event parameters include:
+        - SoftwareVersion: From Device.LocalAgent.SoftwareVersion (local)
+        - FirmwareVersion: From Device.DeviceInfo.SoftwareVersion (bridged)
+        - ParameterMap: Mapping of changed parameters (simplified for now)
+        """
+        # Query boot-related parameters via bridge
+        # These are marked as internal=True since they're part of agent's boot info
+        boot_params_request = GetRequest(
+            msg_id=f"boot-params-{int(self._boot_time)}",
+            paths=[
+                "Device.LocalAgent.SoftwareVersion",
+                "Device.DeviceInfo.SoftwareVersion",
+                "Device.DeviceInfo.Manufacturer",
+                "Device.DeviceInfo.ProductClass",
+                "Device.DeviceInfo.SerialNumber"
+            ]
+        )
+        
+        # Create internal context (using agent's own endpoint)
+        boot_context = type('BootContext', (), {
+            'endpoint': self.endpoint_id,
+            'mtp_id': 'internal',
+            'controller_id': 'boot-event'
+        })()
+        
+        # Query boot parameters via bridge (internal request)
+        logger.info("Boot! event: Querying boot parameters from bridge...")
+        try:
+            boot_response = await self.handle_get(boot_params_request, boot_context)
+            
+            # Extract parameter values
+            param_values = {}
+            for param_result in boot_response.results:
+                if "value" in param_result:
+                    # Use 'name' field from response (not 'path')
+                    param_name = param_result.get("name") or param_result.get("path")
+                    param_values[param_name] = param_result["value"]
+            
+            logger.info(f"Boot! event: Retrieved {len(param_values)} boot parameters: {list(param_values.keys())}")
+            
+            # Build Boot! event with queried values
+            boot_event = {
+                "event": "Boot!",
+                "obj_path": "Device.LocalAgent.",
+                "params": {
+                    "BootTime": int(self._boot_time),
+                    "Cause": "LocalReboot",
+                    "CommandKey": "",
+                    "SoftwareVersion": param_values.get("Device.LocalAgent.SoftwareVersion", "unknown"),
+                    "FirmwareVersion": param_values.get("Device.DeviceInfo.SoftwareVersion", "unknown"),
+                    "Manufacturer": param_values.get("Device.DeviceInfo.Manufacturer", "unknown"),
+                    "ProductClass": param_values.get("Device.DeviceInfo.ProductClass", "unknown"),
+                    "SerialNumber": param_values.get("Device.DeviceInfo.SerialNumber", "unknown")
+                }
+            }
+            
+            logger.info(f"Boot! event generated with parameters: {boot_event['params']}")
+            
+        except Exception as e:
+            logger.error(f"Boot! event: Failed to query boot parameters: {e}")
+            # Fallback to minimal Boot! event
+            boot_event = {
+                "event": "Boot!",
+                "obj_path": "Device.LocalAgent.",
+                "params": {
+                    "BootTime": int(self._boot_time),
+                    "Cause": "LocalReboot",
+                    "CommandKey": ""
+                }
+            }
+        
         # Send to controller via MTP layer (not shown here)
+        # In a real implementation, this would be sent via the MTP layer
     
     async def _periodic_event_loop(self):
         """
