@@ -185,6 +185,31 @@ class SimpleController:
                     }
                 }
             
+            elif method == 'get_supported_dm':
+                # Query data model structure
+                obj_paths = params.get('obj_paths', [])
+                logger.info(f"   Forwarding GetSupportedDM request to agent: {obj_paths}")
+                
+                from message.request import GetSupportedDMRequest
+                
+                gsdm_req = GetSupportedDMRequest(
+                    msg_id=f"ctrl-{req_id}",
+                    obj_paths=obj_paths,
+                    first_level_only=params.get('first_level_only', False),
+                    return_params=params.get('return_params', True)
+                )
+                
+                gsdm_resp = await self.agent.handle_get_supported_dm(gsdm_req, controller_ctx)
+                
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "status": "success",
+                        "supported_objects": gsdm_resp.supported_objects
+                    }
+                }
+            
             elif method == 'operate':
                 # Execute command
                 command = params.get('command')
@@ -429,6 +454,29 @@ async def test_complete_flow():
             req_id=6
         )
         print(f"✅ Error handling works: {response['result']['parameters'][0].get('error', 'no error')}\n")
+        
+        # Test 7: GetSupportedDM - Query data model structure
+        print("=" * 80)
+        print("Test 7: GetSupportedDM - Query data model structure")
+        print("=" * 80)
+        response = await client.send_request(
+            method="get_supported_dm",
+            params={
+                "obj_paths": ["Device.DeviceInfo."],
+                "return_params": True
+            },
+            req_id=7
+        )
+        if 'error' in response:
+            print(f"⚠️  GetSupportedDM error: {response['error']['message']}\n")
+        else:
+            obj_info = response['result'].get('supported_objects', {}).get('Device.DeviceInfo.', {})
+            param_count = len(obj_info.get('parameters', {}))
+            print(f"✅ Result: Found {param_count} parameters in Device.DeviceInfo.")
+            if param_count > 0:
+                # Show a few parameters
+                sample_params = list(obj_info['parameters'].keys())[:5]
+                print(f"   Sample: {', '.join(sample_params)}\n")
         
     finally:
         await client.close()

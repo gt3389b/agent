@@ -269,25 +269,27 @@ class BridgeAgent:
         """Handle GetSupportedDM - combine local and backend data models"""
         local_paths, remote_paths = self._split_paths(request.obj_paths)
         
-        results = []
+        supported_objects = {}
         
         # Get local data model metadata via bridge (internal)
         if local_paths:
             local_req = GetSupportedDMRequest(
                 obj_paths=local_paths, msg_id=request.msg_id
             )
-            local_results = await self._bridge_request(local_req, controller_context, internal=True)
-            results.extend(local_results)
+            local_response = await self._bridge_request(local_req, controller_context, internal=True)
+            if hasattr(local_response, 'supported_objects'):
+                supported_objects.update(local_response.supported_objects)
         
         # Get backend data model metadata
         if remote_paths:
             backend_req = GetSupportedDMRequest(
                 obj_paths=remote_paths, msg_id=request.msg_id
             )
-            backend_results = await self._bridge_request(backend_req, controller_context)
-            results.extend(backend_results)
+            backend_response = await self._bridge_request(backend_req, controller_context)
+            if hasattr(backend_response, 'supported_objects'):
+                supported_objects.update(backend_response.supported_objects)
         
-        return GetSupportedDMResponse(msg_id=request.msg_id, results=results)
+        return GetSupportedDMResponse(msg_id=request.msg_id, supported_objects=supported_objects)
     
     async def handle_get_instances(self, request: GetInstancesRequest,
                                    controller_context: Any) -> GetInstancesResponse:
@@ -469,7 +471,7 @@ class BridgeAgent:
         elif operation == "get_supported_dm":
             return GetSupportedDMResponse(
                 msg_id=request.msg_id,
-                results=data.get("results", [])
+                supported_objects=data.get("supported_objects", {})
             )
         elif operation == "get_instances":
             return GetInstancesResponse(

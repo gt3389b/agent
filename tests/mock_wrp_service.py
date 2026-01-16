@@ -76,6 +76,8 @@ class MockWrpService:
                 result = self._handle_get(jsonrpc_request)
             elif method == "set":
                 result = self._handle_set(jsonrpc_request)
+            elif method == "getAttributes":
+                result = self._handle_get_attributes(jsonrpc_request)
             elif method == "operate":
                 result = self._handle_operate(jsonrpc_request)
             elif method == "add":
@@ -156,6 +158,43 @@ class MockWrpService:
         return {
             "updated_params": updated_params,
             "failed_params": failed_params
+        }
+    
+    def _handle_get_attributes(self, request: Dict) -> Dict:
+        """Handle JSON-RPC getAttributes request (GetSupportedDM)"""
+        params = request.get("params", {})
+        names = params.get("names", [])
+        include_params = params.get("includeParameters", True)
+        
+        logger.info(f"   GetAttributes for paths: {names}")
+        
+        # Build data model info from Database._dm
+        supported_objects = {}
+        
+        for obj_path in names:
+            # Find all parameters under this path
+            obj_params = {}
+            
+            if include_params:
+                for dm_path, access in self.db._dm.items():
+                    if dm_path.startswith(obj_path):
+                        # Extract parameter name
+                        param_name = dm_path.split('.')[-1]
+                        obj_params[param_name] = {
+                            "access": access,
+                            "type": "string"  # Simplified
+                        }
+            
+            supported_objects[obj_path] = {
+                "access": "readOnly",
+                "is_multi_instance": "{i}" in obj_path,
+                "parameters": obj_params
+            }
+            
+            logger.info(f"   Found {len(obj_params)} parameters under {obj_path}")
+        
+        return {
+            "supported_objects": supported_objects
         }
     
     def _handle_operate(self, request: Dict) -> Dict:
