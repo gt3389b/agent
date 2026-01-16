@@ -168,13 +168,19 @@ class BridgeAgent:
     async def handle_set(self, request: SetRequest,
                         controller_context: Any) -> SetResponse:
         """Handle USP Set request"""
-        local_params, remote_params = self._split_set_params(request.params)
-        
-        results = []
+        # Convert dict parameters to list format expected by _split_set_params
+        if isinstance(request.parameters, dict):
+            params_list = [{"path": path, "value": value} 
+                          for path, value in request.parameters.items()]
+        else:
+            params_list = request.parameters
+            
+        local_params, remote_params = self._split_set_params(params_list)
         
         # Handle local parameters via bridge (using agent's own endpoint)
         if local_params:
-            local_req = SetRequest(params=local_params, msg_id=request.msg_id)
+            local_req = SetRequest(parameters={p["path"]: p["value"] for p in local_params}, 
+                                  msg_id=request.msg_id)
             local_response = await self._bridge_request(
                 local_req, controller_context, internal=True
             )
@@ -183,7 +189,8 @@ class BridgeAgent:
         
         # Bridge remote parameters to backend
         if remote_params:
-            backend_req = SetRequest(params=remote_params, msg_id=request.msg_id)
+            backend_req = SetRequest(parameters={p["path"]: p["value"] for p in remote_params}, 
+                                    msg_id=request.msg_id)
             backend_results = await self._bridge_request(
                 backend_req, controller_context
             )
