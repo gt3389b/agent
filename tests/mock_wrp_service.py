@@ -311,15 +311,41 @@ class MockWrpService:
         obj_path = request.get("params", {}).get("obj_path")
         params = request.get("params", {}).get("params", {})
         
-        # Simulate creating instance (e.g., Device.WiFi.SSID.2.)
-        instance_num = 2  # Mock instance number
+        logger.info(f"   Add: creating instance at {obj_path}")
+        
+        # Simulate creating instance - find next available instance number
+        instance_num = 1
+        while True:
+            test_path = f"{obj_path}{instance_num}."
+            # Check if this instance exists
+            exists = any(k.startswith(test_path) for k in self.db._db.keys())
+            if not exists:
+                break
+            instance_num += 1
+        
         created_path = f"{obj_path}{instance_num}."
         
-        logger.info(f"   Add: created {created_path}")
+        # Create minimal parameters for this instance
+        if "Device.LocalAgent.MTP." in obj_path:
+            # Create MTP instance
+            self.db._db[created_path + "Enable"] = params.get("Enable", "false")
+            self.db._db[created_path + "Alias"] = params.get("Alias", "")
+            self.db._db[created_path + "Protocol"] = params.get("Protocol", "CoAP")
+        elif "Device.LocalAgent.Controller." in obj_path:
+            # Create Controller instance
+            self.db._db[created_path + "Enable"] = params.get("Enable", "false")
+            self.db._db[created_path + "Alias"] = params.get("Alias", "")
+            self.db._db[created_path + "EndpointID"] = params.get("EndpointID", "")
+        
+        # Save to disk
+        self.db._save()
+        
+        logger.info(f"   Created instance: {created_path}")
         
         return {
             "created_obj_path": created_path,
-            "status": "success"
+            "status": "success",
+            "unique_keys": {}  # No unique keys in our simplified implementation
         }
     
     def _handle_delete(self, request: Dict) -> Dict:
@@ -329,10 +355,29 @@ class MockWrpService:
         results = []
         for path in obj_paths:
             logger.info(f"   Delete: {path}")
-            results.append({
-                "path": path,
-                "status": "success"
-            })
+            
+            # Delete all parameters under this path
+            deleted_count = 0
+            keys_to_delete = [k for k in self.db._db.keys() if k.startswith(path)]
+            
+            for key in keys_to_delete:
+                del self.db._db[key]
+                deleted_count += 1
+            
+            if deleted_count > 0:
+                self.db._save()
+                logger.info(f"   Deleted {deleted_count} parameters from {path}")
+                results.append({
+                    "path": path,
+                    "status": "success"
+                })
+            else:
+                logger.warning(f"   Path not found: {path}")
+                results.append({
+                    "path": path,
+                    "status": "error",
+                    "error": "NoSuchPath"
+                })
         
         return {"results": results}
     

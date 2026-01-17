@@ -261,6 +261,52 @@ class SimpleController:
                     }
                 }
             
+            elif method == 'add':
+                # Create object instance
+                obj_path = params.get('obj_path')
+                create_params = params.get('params', {})
+                logger.info(f"   Forwarding Add request to agent: {obj_path}")
+                
+                # Create simple Add request object (not in message module yet)
+                add_req = type('AddRequest', (), {
+                    'msg_id': f"ctrl-{req_id}",
+                    'obj_path': obj_path,
+                    'params': create_params
+                })()
+                
+                add_resp = await self.agent.handle_add(add_req, controller_ctx)
+                
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "status": getattr(add_resp, 'status', 'success'),
+                        "created_obj_path": getattr(add_resp, 'created_obj_path', '')
+                    }
+                }
+            
+            elif method == 'delete':
+                # Delete object instances
+                obj_paths = params.get('obj_paths', [])
+                logger.info(f"   Forwarding Delete request to agent: {obj_paths}")
+                
+                # Create simple Delete request object (not in message module yet)
+                del_req = type('DeleteRequest', (), {
+                    'msg_id': f"ctrl-{req_id}",
+                    'obj_paths': obj_paths
+                })()
+                
+                del_resp = await self.agent.handle_delete(del_req, controller_ctx)
+                
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "status": "success",
+                        "results": getattr(del_resp, 'results', [])
+                    }
+                }
+            
             else:
                 return {
                     "jsonrpc": "2.0",
@@ -559,6 +605,52 @@ async def test_complete_flow():
                     print(f"   Reset {output_args['ResetCount']} parameters\n")
                 else:
                     print("   Command completed\n")
+        
+        # Test 10: Add - Create new MTP instance
+        print("=" * 80)
+        print("Test 10: Add - Create Device.LocalAgent.MTP instance")
+        print("=" * 80)
+        created_path = ""  # Initialize to handle error case
+        response = await client.send_request(
+            method="add",
+            params={
+                "obj_path": "Device.LocalAgent.MTP.",
+                "params": {
+                    "Enable": "true",
+                    "Alias": "TestMTP",
+                    "Protocol": "WebSocket"
+                }
+            },
+            req_id=10
+        )
+        if 'error' in response:
+            print(f"⚠️  Add error: {response['error']['message']}\n")
+        else:
+            result = response['result']
+            created_path = result.get('created_obj_path', '')
+            print(f"✅ Result: Created instance {created_path}\n")
+        
+        # Test 11: Delete - Remove the MTP instance we just created
+        if created_path:  # Only try to delete if we successfully created
+            print("=" * 80)
+            print("Test 11: Delete - Remove MTP instance")
+            print("=" * 80)
+            response = await client.send_request(
+                method="delete",
+                params={
+                    "obj_paths": [created_path]  # Delete the instance we just created
+                },
+                req_id=11
+            )
+            if 'error' in response:
+                print(f"⚠️  Delete error: {response['error']['message']}\n")
+            else:
+                result = response['result']
+                delete_results = result.get('results', [])
+                if delete_results and delete_results[0].get('status') == 'success':
+                    print(f"✅ Result: Deleted instance {created_path}\n")
+                else:
+                    print(f"⚠️  Delete failed\n")
         
     finally:
         await client.close()
