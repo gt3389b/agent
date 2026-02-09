@@ -181,8 +181,56 @@ class UspShell:
             print("Usage: operate <command> [<arg>=<value> ...]")
             print("Example: operate Device.Reboot()")
             return
-        
-        print("⚠️  Operate command not yet implemented")
+
+        command = args[0]
+        arg_pairs = args[1:]
+
+        parsed_args = {}
+        for pair in arg_pairs:
+            if '=' not in pair:
+                print(f"❌ Invalid arg '{pair}'. Expected key=value")
+                return
+            k, v = pair.split('=', 1)
+            k = k.strip()
+            v = v.strip()
+            if not k:
+                print(f"❌ Invalid arg '{pair}'. Empty key")
+                return
+            parsed_args[k] = v
+
+        print(f"⚙️  Operating: {command}")
+        if parsed_args:
+            print(f"   Args: {parsed_args}")
+
+        try:
+            response = await self._send_request('operate', {
+                'agent_id': self.agent_id,
+                'command': command,
+                'args': parsed_args,
+            })
+
+            if 'error' in response:
+                error = response['error']
+                print(f"\n❌ Error {error['code']}: {error['message']}")
+                return
+
+            result = response.get('result')
+            print("\n✅ Result:")
+            if result is None:
+                print("  (no result)")
+            elif isinstance(result, list):
+                for item in result:
+                    print(f"  {item}")
+            elif isinstance(result, dict):
+                for k, v in result.items():
+                    print(f"  {k} = {v}")
+            else:
+                print(f"  {result}")
+
+        except asyncio.TimeoutError:
+            print("\n❌ Request timed out")
+        except Exception as e:
+            print(f"\n❌ Error: {e}")
     
     async def cmd_info(self, args):
         """Show agent information"""

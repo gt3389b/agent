@@ -3,17 +3,19 @@
   "mtp": {
     "uds": {
       "enabled": true,
-      "socket_path": "/tmp/usp-controller.sock",
-      "mode": "listen"
+      "socket_path": "/tmp/ConnectivityDiagnostics_usp.sock",
+      "mode": "connect",
+      "framing": "servicesdk",
+      "response_timeout_seconds": 10
     },
     "coap": {
-      "enabled": true,
+      "enabled": false,
       "host": "localhost",
       "port": 5683,
       "path": "usp"
     },
     "websocket": {
-      "enabled": true,
+      "enabled": false,
       "host": "localhost",
       "port": 8080,
       "path": "/usp"

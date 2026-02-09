@@ -30,6 +30,7 @@ SOFTWARE.
 import logging
 import json
 import asyncio
+import contextlib
 from datetime import datetime
 from typing import Dict, Optional, Tuple, Set as TypingSet
 
@@ -78,8 +79,12 @@ class Controller:
         uds_config = mtp_config.get('uds', {})
         self._uds_enabled = uds_config.get('enabled', True)
         self._uds_socket_path = uds_config.get('socket_path')
-        self._uds_mode = uds_config.get('mode', 'listen')
+        self._uds_mode = str(uds_config.get('mode', 'listen')).lower()
+        self._uds_framing = str(uds_config.get('framing', 'length-prefix')).lower()
+        self._uds_response_timeout = float(uds_config.get('response_timeout_seconds', 10.0))
         self._uds_transport = None
+        self._uds_client_reader_task = None
+        self._uds_connected_event = asyncio.Event()
         
         # CoAP configuration
         coap_config = mtp_config.get('coap', {})
@@ -128,7 +133,10 @@ class Controller:
         logger.info("USP Controller Initialized")
         logger.info(f"  Endpoint ID: {self._endpoint_id}")
         if self._uds_enabled and self._uds_socket_path:
-            logger.info(f"  UDS: {self._uds_socket_path} (mode={self._uds_mode})")
+            if self._uds_mode == 'connect':
+                logger.info(f"  UDS: connect -> {self._uds_socket_path}")
+            else:
+                logger.info(f"  UDS: listen -> {self._uds_socket_path}")
         if self._coap_enabled:
             logger.info(f"  CoAP: {self._coap_host}:{self._coap_port}/{self._coap_path}")
         if self._websocket_enabled:
@@ -145,9 +153,24 @@ class Controller:
         
         # Start UDS listener if enabled and configured
         if self._uds_enabled and self._uds_socket_path:
-            self._uds_transport = UdsTransport(self._uds_socket_path, self._uds_mode)
-            logger.info(f"Starting UDS listener on {self._uds_socket_path}")
-            tasks.append(asyncio.create_task(self._run_uds_server()))
+            if self._uds_mode == 'connect':
+                self._uds_transport = UdsTransport(
+                    self._uds_socket_path,
+                    'connect',
+                    endpoint_id=self._endpoint_id,
+                    framing=self._uds_framing,
+                )
+                logger.info(f"Connecting to UDS agent server at {self._uds_socket_path}")
+                tasks.append(asyncio.create_task(self._run_uds_client()))
+            else:
+                self._uds_transport = UdsTransport(
+                    self._uds_socket_path,
+                    'listen',
+                    endpoint_id=self._endpoint_id,
+                    framing=self._uds_framing,
+                )
+                logger.info(f"Starting UDS listener on {self._uds_socket_path}")
+                tasks.append(asyncio.create_task(self._run_uds_server()))
         
         # Start CoAP listener if enabled
         if self._coap_enabled:
@@ -181,6 +204,38 @@ class Controller:
                 await self._uds_transport.server.serve_forever()
         except Exception as e:
             logger.error(f"UDS server error: {e}", exc_info=True)
+
+    async def _run_uds_client(self):
+        """Run UDS client (controller connects to agent's UDS server)"""
+        try:
+            await self._uds_transport.connect()
+            self._uds_connected_event.set()
+            logger.info(f"✓ Connected to agent UDS server: {self._uds_socket_path}")
+
+            # If using ServiceSdk framing, we learn the peer endpoint_id from the handshake.
+            # Register it immediately so the northbound API/shell can target it without
+            # waiting for a Boot!/Notify message.
+            peer_id = getattr(self._uds_transport, 'peer_endpoint_id', None)
+            if peer_id and peer_id not in self._connected_agents:
+                now = datetime.utcnow().isoformat() + 'Z'
+                self._connected_agents[peer_id] = {
+                    'mtp_type': 'uds',
+                    'mtp_info': self._uds_socket_path,
+                    'last_boot': '',
+                    'last_heartbeat': now,
+                    'metadata': {},
+                }
+                logger.info(f"Registered connected UDS peer as agent: {peer_id}")
+
+            # Start background read loop to receive notifications + responses
+            self._uds_client_reader_task = asyncio.create_task(self._uds_client_read_loop())
+            await self._uds_client_reader_task
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"UDS client error: {e}", exc_info=True)
+        finally:
+            self._uds_connected_event.clear()
     
     async def _run_coap_server(self):
         """Run CoAP server"""
@@ -304,6 +359,61 @@ class Controller:
             
         except Exception as e:
             logger.error(f"Error handling UDS message: {e}", exc_info=True)
+
+    def _parse_usp_record_and_msg(self, data: bytes) -> Tuple[usp_record_pb2.Record, usp_msg_pb2.Msg]:
+        """Parse raw USP Record bytes into (Record, Msg)."""
+        record = usp_record_pb2.Record()
+        record.ParseFromString(data)
+
+        msg = usp_msg_pb2.Msg()
+        if record.HasField('no_session_context'):
+            msg.ParseFromString(record.no_session_context.payload)
+        elif record.HasField('session_context'):
+            msg.ParseFromString(record.session_context.payload[0])
+        return record, msg
+
+    async def _uds_client_read_loop(self):
+        """Read loop for UDS client mode; dispatches notifications and fulfills pending requests."""
+        while True:
+            data = await self._uds_transport.receive_message()
+            if not data:
+                logger.warning("UDS connection closed by agent")
+                return
+
+            try:
+                record, msg = self._parse_usp_record_and_msg(data)
+                agent_id = record.from_id
+
+                # Track connected agent (UDS server we're connected to)
+                if agent_id and agent_id not in self._connected_agents:
+                    self._connected_agents[agent_id] = {
+                        'mtp_type': 'uds',
+                        'mtp_info': self._uds_socket_path,
+                        'last_heartbeat': datetime.now().isoformat(),
+                        'metadata': {}
+                    }
+                elif agent_id:
+                    self._connected_agents[agent_id]['mtp_type'] = 'uds'
+                    self._connected_agents[agent_id]['mtp_info'] = self._uds_socket_path
+                    self._connected_agents[agent_id]['last_heartbeat'] = datetime.now().isoformat()
+
+                # If this is a response to a pending request, fulfill the future.
+                msg_id = msg.header.msg_id
+                is_response = bool(msg.body.response.WhichOneof('resp_type'))
+                is_error = (msg.body.WhichOneof('msg_body') == 'error')
+                if (is_response or is_error) and msg_id in self._pending_requests:
+                    fut = self._pending_requests.pop(msg_id)
+                    if not fut.done():
+                        fut.set_result((record, msg))
+                    continue
+
+                # Otherwise, treat as an incoming message/notification.
+                # Important: do not await here. Notification handlers may trigger
+                # controller-initiated requests that rely on this read loop to keep
+                # consuming responses.
+                asyncio.create_task(self._process_message(record, self._uds_transport.writer, 'uds'))
+            except Exception as e:
+                logger.error(f"Error processing incoming UDS data: {e}", exc_info=True)
     
     async def _handle_coap_message(self, data, coap_request):
         """
@@ -710,38 +820,178 @@ class Controller:
     
     async def _send_request_uds(self, request_msg, socket_path, request_type):
         """Send request via UDS"""
-        transport = None
         try:
-            transport = UdsTransport(socket_path, mode='connect')
+            request_record_bytes = request_msg.SerializeToString()
+
+            # If controller is running in UDS client mode and the request targets the same socket,
+            # send over the persistent connection and await the response via the reader loop.
+            if (
+                self._uds_mode == 'connect'
+                and self._uds_transport
+                and socket_path == self._uds_socket_path
+            ):
+                # Ensure connected (start() may still be connecting)
+                await asyncio.wait_for(self._uds_connected_event.wait(), timeout=self._uds_response_timeout)
+
+                req_record, req_msg = self._parse_usp_record_and_msg(request_record_bytes)
+                msg_id = req_msg.header.msg_id
+
+                fut = asyncio.get_event_loop().create_future()
+                self._pending_requests[msg_id] = fut
+
+                try:
+                    await self._uds_transport.send_message(request_record_bytes)
+                    logger.info(f"✓ {request_type} request sent via UDS (persistent connection)")
+                    logger.info(f"Waiting for {request_type} response...")
+
+                    resp_record, resp_msg = await asyncio.wait_for(fut, timeout=self._uds_response_timeout)
+                    logger.info(f"✓ {request_type} response received via UDS")
+                    return resp_record, resp_msg
+                finally:
+                    # Ensure pending entry is not leaked on timeout/cancel.
+                    self._pending_requests.pop(msg_id, None)
+
+            # Fallback: open a temporary connection to the agent socket for this request.
+            transport = UdsTransport(
+                socket_path,
+                mode='connect',
+                endpoint_id=self._endpoint_id,
+                framing=self._uds_framing,
+            )
             await transport.connect()
-            request_record = request_msg.SerializeToString()
-            await transport.send_message(request_record)
-            
+            await transport.send_message(request_record_bytes)
+
             logger.info(f"✓ {request_type} request sent via UDS")
             logger.info(f"Waiting for {request_type} response...")
-            
-            # Wait for response
+
             response_data = await transport.receive_message()
-            if response_data:
-                # Parse the response
-                resp_record = usp_record_pb2.Record()
-                resp_record.ParseFromString(response_data)
-                
-                resp_msg = usp_msg_pb2.Msg()
-                resp_msg.ParseFromString(resp_record.no_session_context.payload)
-                
-                logger.info(f"✓ {request_type} response received via UDS")
-                return resp_record, resp_msg
-            else:
+            if not response_data:
                 logger.warning(f"No {request_type} response received")
                 return None, None
-            
+
+            resp_record, resp_msg = self._parse_usp_record_and_msg(response_data)
+            logger.info(f"✓ {request_type} response received via UDS")
+            return resp_record, resp_msg
         except Exception as e:
             logger.error(f"Error sending {request_type} via UDS: {e}", exc_info=True)
             return None, None
         finally:
-            if transport:
+            if 'transport' in locals() and transport:
                 await transport.close()
+
+    async def send_get_request(self, agent_id, paths):
+        """Send Get request to agent and return a flat param->value dict."""
+        if agent_id not in self._connected_agents:
+            raise ValueError(f"Agent not connected: {agent_id}")
+
+        get_msg = Get(
+            to_id=agent_id,
+            from_id=self._endpoint_id,
+            param_paths=list(paths),
+        )
+
+        resp_record, resp_msg = await self._send_request(get_msg, agent_id, 'Get')
+        if resp_msg and resp_msg.body.WhichOneof('msg_body') == 'error':
+            err = resp_msg.body.error
+            raise RuntimeError(f"USP Error {err.err_code}: {err.err_msg}")
+        if not resp_msg or not resp_msg.body.response.HasField('get_resp'):
+            return {}
+
+        return self._parse_get_response(resp_msg)
+
+    def _parse_get_response(self, msg):
+        """Parse GetResponse into a flat param->value dict."""
+        out = {}
+        get_resp = msg.body.response.get_resp
+
+        for req_path_result in get_resp.req_path_results:
+            requested_path = getattr(req_path_result, 'requested_path', '')
+
+            # proto3 scalars/repeated fields don't have presence; use err_code and list length.
+            if getattr(req_path_result, 'err_code', 0) != 0:
+                out[requested_path] = f"ERROR {req_path_result.err_code}: {req_path_result.err_msg}"
+                continue
+
+            if len(req_path_result.resolved_path_results) == 0:
+                out[requested_path] = "(no results)"
+                continue
+
+            for resolved in req_path_result.resolved_path_results:
+                base = resolved.resolved_path
+                for param_name, param_value in resolved.result_params.items():
+                    key = param_name
+                    if base and ('.' not in param_name or not param_name.startswith('Device.')):
+                        if base.endswith('.'):
+                            key = base + param_name
+                        else:
+                            key = base + '.' + param_name
+                    out[key] = param_value
+
+        return out
+
+    async def send_set_request(self, agent_id, parameters):
+        """Send Set request to agent.
+
+        parameters: list of {"path": "Device....Param", "value": "..."}
+        Returns a dict of updated param->value when available.
+        """
+        if agent_id not in self._connected_agents:
+            raise ValueError(f"Agent not connected: {agent_id}")
+
+        # Group params by object path, converting full param path into obj_path + param name.
+        grouped = {}
+        for item in parameters:
+            full_path = item.get('path')
+            value = item.get('value')
+            if not full_path:
+                continue
+            if '.' not in full_path:
+                raise ValueError(f"Invalid parameter path: {full_path}")
+            obj_path, param_name = full_path.rsplit('.', 1)
+            obj_path = obj_path + '.'
+
+            grouped.setdefault(obj_path, []).append({'param': param_name, 'value': str(value)})
+
+        objects = []
+        for obj_path, param_settings in grouped.items():
+            objects.append({'obj_path': obj_path, 'param_settings': param_settings})
+
+        set_msg = Set(
+            to_id=agent_id,
+            from_id=self._endpoint_id,
+            objects=objects,
+            allow_partial=True,
+        )
+
+        resp_record, resp_msg = await self._send_request(set_msg, agent_id, 'Set')
+        if resp_msg and resp_msg.body.WhichOneof('msg_body') == 'error':
+            err = resp_msg.body.error
+            raise RuntimeError(f"USP Error {err.err_code}: {err.err_msg}")
+        if not resp_msg or not resp_msg.body.response.HasField('set_resp'):
+            return {}
+
+        return self._parse_set_response(resp_msg)
+
+    def _parse_set_response(self, msg):
+        """Parse SetResponse into a best-effort dict of updated param->value."""
+        out = {}
+        set_resp = msg.body.response.set_resp
+        for updated_obj in set_resp.updated_obj_results:
+            requested_path = getattr(updated_obj, 'requested_path', '')
+            if updated_obj.oper_status.HasField('oper_success'):
+                for inst_result in updated_obj.oper_status.oper_success.updated_inst_results:
+                    for param_name, param_value in inst_result.updated_params.items():
+                        key = param_name
+                        if requested_path and ('.' not in param_name or not param_name.startswith('Device.')):
+                            base = requested_path
+                            if not base.endswith('.'):
+                                base += '.'
+                            key = base + param_name
+                        out[key] = param_value
+            elif updated_obj.oper_status.HasField('oper_failure'):
+                err = updated_obj.oper_status.oper_failure
+                out[requested_path or 'set'] = f"ERROR {err.err_code}: {err.err_msg}"
+        return out
     
     async def _send_request_coap(self, request_msg, coap_url, request_type):
         """Send request via CoAP"""
@@ -995,13 +1245,18 @@ class Controller:
             # Log retrieved objects
             for req_path_result in get_resp.req_path_results:
                 logger.info(f"  Requested Path: {req_path_result.requested_path}")
-                if req_path_result.HasField('resolved_path_results'):
-                    for resolved in req_path_result.resolved_path_results:
-                        logger.info(f"    Resolved Path: {resolved.resolved_path}")
-                        for param_name, param_value in resolved.result_params.items():
-                            logger.info(f"      {param_name} = {param_value}")
-                elif req_path_result.HasField('err_msg'):
+                if getattr(req_path_result, 'err_code', 0) != 0:
                     logger.error(f"    Error {req_path_result.err_code}: {req_path_result.err_msg}")
+                    continue
+
+                if len(req_path_result.resolved_path_results) == 0:
+                    logger.info("    (no results)")
+                    continue
+
+                for resolved in req_path_result.resolved_path_results:
+                    logger.info(f"    Resolved Path: {resolved.resolved_path}")
+                    for param_name, param_value in resolved.result_params.items():
+                        logger.info(f"      {param_name} = {param_value}")
         else:
             logger.warning("Invalid Get response")
     
@@ -1030,11 +1285,28 @@ class Controller:
         # Set command
         operate_req = operate_msg.body.request.operate
         operate_req.command = command
-        
-        # Set input arguments
-        for key, value in args.items():
-            operate_req.command_key = key
-            operate_req.input[key] = str(value)
+        # A unique key for correlating async operations/notifications
+        operate_req.command_key = msg_id
+        operate_req.send_resp = True
+
+        # Set input arguments (map<string, string>)
+        if args:
+            if isinstance(args, dict):
+                items = args.items()
+            elif isinstance(args, (list, tuple)):
+                items = []
+                for item in args:
+                    if isinstance(item, dict) and 'key' in item and 'value' in item:
+                        items.append((item['key'], item['value']))
+                    elif isinstance(item, (list, tuple)) and len(item) == 2:
+                        items.append((item[0], item[1]))
+                    else:
+                        raise TypeError("Operate args must be dict or list of key/value pairs")
+            else:
+                raise TypeError("Operate args must be a dict")
+
+            for key, value in items:
+                operate_req.input_args[str(key)] = str(value)
         
         # Wrap in USP Record
         record = usp_record_pb2.Record()
@@ -1046,6 +1318,10 @@ class Controller:
         
         # Send via appropriate MTP
         resp_record, resp_msg = await self._send_request(record, agent_id, 'Operate')
+
+        if resp_msg and resp_msg.body.WhichOneof('msg_body') == 'error':
+            err = resp_msg.body.error
+            raise RuntimeError(f"USP Error {err.err_code}: {err.err_msg}")
         
         if resp_msg and resp_msg.body.response.HasField('operate_resp'):
             return self._parse_operate_response(resp_msg)
@@ -1059,24 +1335,32 @@ class Controller:
         results = []
         for op_result in operate_resp.operation_results:
             if op_result.HasField('req_output_args'):
-                # Success
-                output = {}
-                for key, value in op_result.req_output_args.output_args.items():
-                    output[key] = value
-                
+                # Success (synchronous)
                 results.append({
                     'success': True,
                     'executed_command': op_result.executed_command,
-                    'output_args': output
+                    'output_args': dict(op_result.req_output_args.output_args),
                 })
             elif op_result.HasField('req_obj_path'):
-                # Error
-                cmd_failure = op_result.req_obj_path.cmd_failure
+                # Pending (asynchronous) - completion will arrive as Notify(OperationComplete)
+                results.append({
+                    'success': None,
+                    'executed_command': op_result.executed_command,
+                    'requested_obj_path': op_result.req_obj_path,
+                })
+            elif op_result.HasField('cmd_failure'):
+                # Failure
                 results.append({
                     'success': False,
-                    'command': op_result.req_obj_path.requested_path,
-                    'error_code': cmd_failure.err_code,
-                    'error_message': cmd_failure.err_msg
+                    'executed_command': op_result.executed_command,
+                    'error_code': op_result.cmd_failure.err_code,
+                    'error_message': op_result.cmd_failure.err_msg,
+                })
+            else:
+                results.append({
+                    'success': False,
+                    'executed_command': op_result.executed_command,
+                    'error_message': 'Unknown operation result'
                 })
         
         return results
@@ -1113,6 +1397,11 @@ class Controller:
     
     async def stop(self):
         """Stop the controller and clean up"""
+        if self._uds_client_reader_task:
+            self._uds_client_reader_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._uds_client_reader_task
+
         if self._uds_transport:
             await self._uds_transport.close()
         

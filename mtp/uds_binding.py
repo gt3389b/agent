@@ -34,7 +34,7 @@ from mtp.uds import UdsTransport
 class UdsUspBinding(UspBinding):
     """UDS-specific USP Binding"""
     
-    def __init__(self, endpoint_id, socket_path, mode='listen'):
+    def __init__(self, endpoint_id, socket_path, mode='listen', *, framing: str = 'length-prefix'):
         """
         Initialize UDS USP Binding
         
@@ -42,11 +42,12 @@ class UdsUspBinding(UspBinding):
             endpoint_id (str): Agent endpoint ID
             socket_path (str): Path to Unix socket
             mode (str): 'listen' for server, 'connect' for client
+            framing (str): 'length-prefix' (default) or 'servicesdk'
         """
         super().__init__(endpoint_id)
         self.socket_path = socket_path
         self.mode = mode
-        self.transport = UdsTransport(socket_path, mode)
+        self.transport = UdsTransport(socket_path, mode, endpoint_id=endpoint_id, framing=framing)
         self._message_callback = None
     
     async def start_server(self, message_callback):
