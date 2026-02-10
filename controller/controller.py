@@ -1365,6 +1365,151 @@ class Controller:
         
         return results
     
+    async def send_get_supported_dm_request(self, agent_id, obj_paths, first_level_only=False, 
+                                           return_commands=True, return_events=True, return_params=True):
+        """
+        Send GetSupportedDM request to agent
+        
+        Args:
+            agent_id: Agent endpoint ID
+            obj_paths: List of object paths to query (e.g., ["Device.WiFi."])
+            first_level_only: Only return immediate children
+            return_commands: Include commands in response
+            return_events: Include events in response
+            return_params: Include parameters in response
+            
+        Returns:
+            dict: Data model structure {
+                "Device.Service.": {
+                    "access": "read-only",
+                    "is_multi_instance": false,
+                    "parameters": {
+                        "Status": {"access": "read-only", "type": "string"},
+                        ...
+                    },
+                    "commands": {
+                        "DoSomething()": {"input_args": ["arg1"], "output_args": ["result"], "type": "sync"},
+                        ...
+                    },
+                    "events": {
+                        "OnChange!": {"arg_names": ["value", "timestamp"]},
+                        ...
+                    }
+                }
+            }
+        """
+        if agent_id not in self._connected_agents:
+            raise ValueError(f"Agent not connected: {agent_id}")
+        
+        gsdm_msg = GetSupportedDM(
+            to_id=agent_id,
+            from_id=self._endpoint_id,
+            obj_paths=obj_paths,
+            first_level_only=first_level_only,
+            return_commands=return_commands,
+            return_events=return_events,
+            return_params=return_params
+        )
+        
+        resp_record, resp_msg = await self._send_request(gsdm_msg, agent_id, 'GetSupportedDM')
+        
+        if resp_msg and resp_msg.body.WhichOneof('msg_body') == 'error':
+            err = resp_msg.body.error
+            raise RuntimeError(f"USP Error {err.err_code}: {err.err_msg}")
+        
+        if not resp_msg or not resp_msg.body.response.HasField('get_supported_dm_resp'):
+            return {}
+        
+        return self._parse_get_supported_dm_response(resp_msg)
+    
+    def _parse_get_supported_dm_response(self, msg):
+        """Parse GetSupportedDM response into structured dict"""
+        result = {}
+        gsdm_resp = msg.body.response.get_supported_dm_resp
+        
+        for req_obj_result in gsdm_resp.req_obj_results:
+            if req_obj_result.err_code != 0:
+                result[req_obj_result.req_obj_path] = {
+                    'error': f"Error {req_obj_result.err_code}: {req_obj_result.err_msg}"
+                }
+                continue
+            
+            for supported_obj in req_obj_result.supported_objs:
+                obj_path = supported_obj.supported_obj_path
+                
+                # Map access type
+                access_map = {
+                    0: 'read-only',   # OBJ_READ_ONLY
+                    1: 'add-delete',  # OBJ_ADD_DELETE
+                    2: 'add-only',    # OBJ_ADD_ONLY
+                    3: 'delete-only', # OBJ_DELETE_ONLY
+                }
+                access = access_map.get(supported_obj.access, 'unknown')
+                
+                obj_data = {
+                    'access': access,
+                    'is_multi_instance': supported_obj.is_multi_instance,
+                }
+                
+                # Parse parameters
+                if supported_obj.supported_params:
+                    params = {}
+                    for param in supported_obj.supported_params:
+                        param_access_map = {
+                            0: 'read-only',   # PARAM_READ_ONLY
+                            1: 'read-write',  # PARAM_READ_WRITE
+                            2: 'write-only',  # PARAM_WRITE_ONLY
+                        }
+                        param_type_map = {
+                            0: 'unknown',
+                            1: 'base64',
+                            2: 'boolean',
+                            3: 'datetime',
+                            4: 'decimal',
+                            5: 'hexbinary',
+                            6: 'int',
+                            7: 'long',
+                            8: 'string',
+                            9: 'unsignedInt',
+                            10: 'unsignedLong',
+                        }
+                        
+                        params[param.param_name] = {
+                            'access': param_access_map.get(param.access, 'unknown'),
+                            'type': param_type_map.get(param.value_type, 'unknown'),
+                        }
+                    obj_data['parameters'] = params
+                
+                # Parse commands
+                if supported_obj.supported_commands:
+                    commands = {}
+                    for cmd in supported_obj.supported_commands:
+                        cmd_type_map = {
+                            0: 'unknown',
+                            1: 'sync',
+                            2: 'async',
+                        }
+                        
+                        commands[cmd.command_name] = {
+                            'input_args': list(cmd.input_arg_names),
+                            'output_args': list(cmd.output_arg_names),
+                            'type': cmd_type_map.get(cmd.command_type, 'unknown'),
+                        }
+                    obj_data['commands'] = commands
+                
+                # Parse events
+                if supported_obj.supported_events:
+                    events = {}
+                    for evt in supported_obj.supported_events:
+                        events[evt.event_name] = {
+                            'arg_names': list(evt.arg_names),
+                        }
+                    obj_data['events'] = events
+                
+                result[obj_path] = obj_data
+        
+        return result
+    
     def _generate_msg_id(self):
         """Generate unique message ID"""
         self._msg_id_counter += 1

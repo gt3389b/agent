@@ -104,6 +104,8 @@ class ControllerNorthbound:
                 result = await self._cmd_set(params)
             elif method == 'operate':
                 result = await self._cmd_operate(params)
+            elif method == 'get_supported_dm':
+                result = await self._cmd_get_supported_dm(params)
             elif method == 'list_agents':
                 result = await self._cmd_list_agents(params)
             else:
@@ -200,6 +202,42 @@ class ControllerNorthbound:
         logger.info(f"Northbound Operate: {agent_id} -> {command}")
         
         result = await self.controller.send_operate_request(agent_id, command, args)
+        return result
+    
+    async def _cmd_get_supported_dm(self, params):
+        """
+        Execute GetSupportedDM command
+        
+        Args:
+            params: {
+                "agent_id": "self::uds-agent-001",
+                "obj_paths": ["Device.WiFi.", "Device.Ethernet."],
+                "first_level_only": false,  # optional
+                "return_commands": true,     # optional
+                "return_events": true,       # optional
+                "return_params": true        # optional
+            }
+            
+        Returns:
+            dict: Data model structure with parameters, commands, and events
+        """
+        agent_id = params.get('agent_id')
+        obj_paths = params.get('obj_paths', ['Device.'])
+        first_level_only = params.get('first_level_only', False)
+        return_commands = params.get('return_commands', True)
+        return_events = params.get('return_events', True)
+        return_params = params.get('return_params', True)
+        
+        if not agent_id:
+            raise ValueError("agent_id required")
+        if not obj_paths:
+            raise ValueError("obj_paths required")
+        
+        logger.info(f"Northbound GetSupportedDM: {agent_id} -> {obj_paths}")
+        
+        result = await self.controller.send_get_supported_dm_request(
+            agent_id, obj_paths, first_level_only, return_commands, return_events, return_params
+        )
         return result
     
     async def _cmd_list_agents(self, params):
