@@ -199,11 +199,18 @@ python3 -m nose2 -v tests.test_uds_usp_binding
 # Terminal 1: Start agent in listen mode
 python3 -m agent.main -t uds --uds --uds-path /tmp/usp-test.sock
 
-# Terminal 2: Start controller in connect mode
-python3 -m controller.main --uds --uds-path /tmp/usp-test.sock
+# Terminal 2: Start controller (UDS connect mode) + northbound API
+#   - Ensure cfg/controller.json has:
+#       mtp.uds.socket_path: "/tmp/usp-test.sock"
+#       mtp.uds.mode: "connect"
+#       mtp.uds.framing: "length-prefix"
+python3 -m controller.main -c cfg/controller.json
 
-# Terminal 2: Send Get request
->>> get Device.DeviceInfo.Manufacturer
+# Terminal 3: Start interactive shell (talks to /tmp/usp-controller-api.sock)
+python3 bin/shell.py
+
+# In the shell:
+usp> get Device.DeviceInfo.Manufacturer
 ```
 
 #### Test 2: Bidirectional Communication

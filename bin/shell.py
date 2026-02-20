@@ -181,8 +181,162 @@ class UspShell:
             print("Usage: operate <command> [<arg>=<value> ...]")
             print("Example: operate Device.Reboot()")
             return
+
+        command = args[0]
+        arg_pairs = args[1:]
+
+        parsed_args = {}
+        for pair in arg_pairs:
+            if '=' not in pair:
+                print(f"❌ Invalid arg '{pair}'. Expected key=value")
+                return
+            k, v = pair.split('=', 1)
+            k = k.strip()
+            v = v.strip()
+            if not k:
+                print(f"❌ Invalid arg '{pair}'. Empty key")
+                return
+            parsed_args[k] = v
+
+        print(f"⚙️  Operating: {command}")
+        if parsed_args:
+            print(f"   Args: {parsed_args}")
+
+        try:
+            response = await self._send_request('operate', {
+                'agent_id': self.agent_id,
+                'command': command,
+                'args': parsed_args,
+            })
+
+            if 'error' in response:
+                error = response['error']
+                print(f"\n❌ Error {error['code']}: {error['message']}")
+                return
+
+            result = response.get('result')
+            print("\n✅ Result:")
+            if result is None:
+                print("  (no result)")
+            elif isinstance(result, list):
+                for item in result:
+                    print(f"  {item}")
+            elif isinstance(result, dict):
+                for k, v in result.items():
+                    print(f"  {k} = {v}")
+            else:
+                print(f"  {result}")
+
+        except asyncio.TimeoutError:
+            print("\n❌ Request timed out")
+        except Exception as e:
+            print(f"\n❌ Error: {e}")
+    
+    async def cmd_get_supported_dm(self, args):
+        """Execute GetSupportedDM command"""
+        if not args:
+            obj_paths = ["Device."]
+            first_level_only = False
+            return_commands = True
+            return_events = True
+            return_params = True
+        else:
+            # Parse arguments
+            obj_paths = []
+            first_level_only = False
+            return_commands = True
+            return_events = True
+            return_params = True
+            
+            for arg in args:
+                if arg.startswith('--'):
+                    if arg == '--first-level':
+                        first_level_only = True
+                    elif arg == '--no-commands':
+                        return_commands = False
+                    elif arg == '--no-events':
+                        return_events = False
+                    elif arg == '--no-params':
+                        return_params = False
+                    else:
+                        print(f"❌ Unknown option: {arg}")
+                        return
+                else:
+                    obj_paths.append(arg)
+            
+            if not obj_paths:
+                obj_paths = ["Device."]
         
-        print("⚠️  Operate command not yet implemented")
+        print(f"📊 Querying data model: {', '.join(obj_paths)}")
+        if first_level_only:
+            print("   (first level only)")
+        
+        try:
+            response = await self._send_request('get_supported_dm', {
+                'agent_id': self.agent_id,
+                'obj_paths': obj_paths,
+                'first_level_only': first_level_only,
+                'return_commands': return_commands,
+                'return_events': return_events,
+                'return_params': return_params
+            })
+            
+            if 'error' in response:
+                error = response['error']
+                print(f"\n❌ Error {error['code']}: {error['message']}")
+            elif 'result' in response:
+                result = response['result']
+                if not result:
+                    print("\n⚠️  No data model information returned")
+                    return
+                
+                for obj_path, obj_data in result.items():
+                    if 'error' in obj_data:
+                        print(f"\n❌ {obj_path}: {obj_data['error']}")
+                        continue
+                    
+                    print(f"\n📊 {obj_path}")
+                    print(f"   Access: {obj_data.get('access', 'unknown')}")
+                    if obj_data.get('is_multi_instance'):
+                        print("   Multi-instance: yes")
+                    
+                    # Display parameters
+                    params = obj_data.get('parameters', {})
+                    if params and return_params:
+                        print(f"\n   Parameters ({len(params)}):")
+                        for param_name, param_info in sorted(params.items()):
+                            access_icon = "✍️" if param_info.get('access') == 'read-write' else "👁️"
+                            param_type = param_info.get('type', 'unknown')
+                            print(f"     {access_icon}  {param_name} ({param_info.get('access')}, {param_type})")
+                    
+                    # Display commands
+                    commands = obj_data.get('commands', {})
+                    if commands and return_commands:
+                        print(f"\n   Commands ({len(commands)}):")
+                        for cmd_name, cmd_info in sorted(commands.items()):
+                            in_args = ', '.join(cmd_info.get('input_args', []))
+                            out_args = ', '.join(cmd_info.get('output_args', []))
+                            cmd_type = cmd_info.get('type', 'unknown')
+                            print(f"     ⚙️  {cmd_name} [{cmd_type}]")
+                            if in_args:
+                                print(f"        Input:  {in_args}")
+                            if out_args:
+                                print(f"        Output: {out_args}")
+                    
+                    # Display events
+                    events = obj_data.get('events', {})
+                    if events and return_events:
+                        print(f"\n   Events ({len(events)}):")
+                        for evt_name, evt_info in sorted(events.items()):
+                            arg_names = ', '.join(evt_info.get('arg_names', []))
+                            print(f"     🔔 {evt_name}")
+                            if arg_names:
+                                print(f"        Args: {arg_names}")
+                
+        except asyncio.TimeoutError:
+            print("\n❌ Request timed out")
+        except Exception as e:
+            print(f"\n❌ Error: {e}")
     
     async def cmd_info(self, args):
         """Show agent information"""
@@ -228,6 +382,16 @@ USP Interactive Shell - Available Commands:
       Execute a command (not yet implemented)
       Example: operate Device.Reboot()
 
+  get_supported_dm <path> [options]
+      Query data model structure (parameters, commands, events)
+      Example: get_supported_dm Device.WiFi.
+      Options:
+        --first-level      Only return immediate children
+        --no-commands      Exclude commands from results
+        --no-events        Exclude events from results
+        --no-params        Exclude parameters from results
+      Aliases: gsdm
+
   info
       Show connected agent information
 
@@ -269,6 +433,8 @@ USP Interactive Shell - Available Commands:
             'get': self.cmd_get,
             'set': self.cmd_set,
             'operate': self.cmd_operate,
+            'get_supported_dm': self.cmd_get_supported_dm,
+            'gsdm': self.cmd_get_supported_dm,
             'info': self.cmd_info,
             'agent': self.cmd_agent,
             'help': self.cmd_help,
