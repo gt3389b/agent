@@ -63,9 +63,9 @@ class UspResponseHandler:
 
             resp_msg, resp_record = self._process_request(req_record, req_msg)
             if self._debug:
-                print("Outgoing Response:\n{}".format(resp_msg))
+                print(f"Outgoing Response:\n{resp_msg}")
         except ProtocolValidationError as err:
-            err_msg = "USP Message validation failed: {}".format(err)
+            err_msg = f"USP Message validation failed: {err}"
             self._logger.error("%s", err_msg)
             raise ProtocolViolationError(err_msg)
 
@@ -80,7 +80,7 @@ class UspResponseHandler:
         self._logger.debug("Incoming payload parsed as a USP Record via Protocol Buffers")
 
         if self._debug:
-            debug_msg = "Incoming USP Record:\n{}".format(req_as_record)
+            debug_msg = f"Incoming USP Record:\n{req_as_record}"
             self._logger.debug("%s", debug_msg)
 
         return req_as_record
@@ -120,7 +120,7 @@ class UspResponseHandler:
         self._logger.debug("Incoming payload parsed as a USP Message via Protocol Buffers")
 
         if self._debug:
-            debug_msg = "Incoming USP Message:\n{}".format(req_as_msg)
+            debug_msg = f"Incoming USP Message:\n{req_as_msg}"
             self._logger.debug("%s", debug_msg)
 
         return req_as_msg
@@ -195,7 +195,7 @@ class SetValidationError(Exception):
         """Initialize the Set Validation Error"""
         self._err_msg = err_msg
         self._err_code = err_code
-        Exception.__init__(self, "[{}] - {}".format(err_code, err_msg))
+        Exception.__init__(self, f"[{err_code}] - {err_msg}")
 
     def get_error_code(self):
         """Retrieve the Error Code"""

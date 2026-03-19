@@ -48,9 +48,9 @@ class UspResource(resource.Resource):
         #logging.info("Incoming payload parsed as a USP Message via Protocol Buffers")
 
         req_as_msg.ParseFromString(req_as_record.no_session_context.payload)
-        debug_msg = "Incoming USP Record:\n{}".format(req_as_record)
+        debug_msg = f"Incoming USP Record:\n{req_as_record}"
         logging.info("%s", debug_msg)
-        debug_msg = "Incoming USP Message:\n{}".format(req_as_msg)
+        debug_msg = f"Incoming USP Message:\n{req_as_msg}"
         logging.info("%s", debug_msg)
 
         self.set_content(request.payload)

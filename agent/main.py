@@ -73,8 +73,8 @@ class Agent:
         coap_port = args.coap_port
         net_intf = args.intf
 
-        dm_file_name = "database/{}-dm.json".format(client_type)
-        db_file_name = "database/runtime/{}-db.json".format(client_type)
+        dm_file_name = f"database/{client_type}-dm.json"
+        db_file_name = f"database/runtime/{client_type}-db.json"
 
         # prometheus_client.start_http_server(9001)  # Disabled - not installed
 

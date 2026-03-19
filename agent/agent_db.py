@@ -47,6 +47,7 @@ import datetime
 import threading
 import os
 import shutil
+from typing import Any
 # import prometheus_client
 
 from agent import utils
@@ -88,7 +89,7 @@ from agent import utils
 
 class Database:
     """Represents a simple database"""
-    def __init__(self, dm_filename, db_filename, net_intf):
+    def __init__(self, dm_filename: str, db_filename: str, net_intf: str) -> None:
         """Initialize the DB from a file"""
         self._net_intf = net_intf
         self._db_filename = db_filename
@@ -127,7 +128,7 @@ class Database:
                 logger.error("Persisted Database is NOT properly formatted JSON: %s", parse_err)
 
     # @DB_GET_SUMMARY_METRIC.time()
-    def get(self, path):
+    def get(self, path: str) -> Any:
         """Retrieve the value of the incoming path, or throw a NoSuchPathError"""
         value = None
 
@@ -158,7 +159,7 @@ class Database:
         return value
 
     # @DB_UPDATE_SUMMARY_METRIC.time()
-    def update(self, path, value):
+    def update(self, path: str, value: Any) -> None:
         """Change the value of the incoming path, or throw a NoSuchPathError"""
         if path in self._db:
             self._db[path] = value
@@ -166,12 +167,12 @@ class Database:
         else:
             raise NoSuchPathError(path)
     
-    def set(self, path, value):
+    def set(self, path: str, value: Any) -> None:
         """Alias for update() - change the value of the incoming path"""
         return self.update(path, value)
 
     # @DB_FIND_PARAMS_SUMMARY_METRIC.time()
-    def find_params(self, path):
+    def find_params(self, path: str) -> list[str]:
         """Retrieve a set of parameter paths that match the incoming path"""
         found_keys = []
         is_implemented_path = False
@@ -208,7 +209,7 @@ class Database:
 
         return found_keys
 
-    def is_param_writable(self, param_path):
+    def is_param_writable(self, param_path: str) -> bool:
         """Validate whether the supplied parameter path is readWrite (return True)"""
         is_writable = False
         dm_param_path = self._generic_dm_path(param_path)
@@ -223,7 +224,7 @@ class Database:
         return is_writable
 
     # @DB_FIND_INSTANCES_SUMMARY_METRIC.time()
-    def find_instances(self, partial_path):
+    def find_instances(self, partial_path: str) -> list[str]:
         """Retrieve a set of object instance paths that match the incoming path"""
         found_keys = []
         is_implemented_path = False
@@ -273,7 +274,7 @@ class Database:
         return found_keys
 
     # @DB_FIND_OBJECTS_SUMMARY_METRIC.time()
-    def find_objects(self, partial_path):
+    def find_objects(self, partial_path: str) -> list[str]:
         """Retrieve a set of instantiated object paths that match the incoming path"""
         found_keys = []
         is_implemented_path = False
@@ -317,7 +318,7 @@ class Database:
         return found_keys
 
     # @DB_FIND_IMPL_OBJECTS_SUMMARY_METRIC.time()
-    def find_impl_objects(self, partial_path, next_level):
+    def find_impl_objects(self, partial_path: str, next_level: bool) -> list[str]:
         """Retrieve a set of implemented object paths that match the incoming path"""
         found_keys = []
         is_implemented_path = False
@@ -377,7 +378,7 @@ class Database:
         return found_keys
 
     # @DB_INSERT_SUMMARY_METRIC.time()
-    def insert(self, partial_path):
+    def insert(self, partial_path: str) -> int:
         """Insert a new object instance for any multi-instance path in the DM.
 
         Returns the new instance number.
@@ -425,7 +426,7 @@ class Database:
         return next_inst_num
 
     # @DB_DELETE_SUMMARY_METRIC.time()
-    def delete(self, partial_path):
+    def delete(self, partial_path: str) -> None:
         """Remove an existing object instance and all its parameters."""
         logger = logging.getLogger(self.__class__.__name__)
 
@@ -540,7 +541,7 @@ class Database:
         shutil.copy2(self._db_filename, backup_path)
         return backup_path
 
-    def factory_reset(self):
+    def factory_reset(self) -> None:
         """Reset database to factory defaults"""
         logger = logging.getLogger(self.__class__.__name__)
         logger.info("Performing factory reset on database %s", self._db_filename)
@@ -568,11 +569,11 @@ class Database:
 
 class NoSuchPathError(Exception):
     """A Database NoSuchPath Error"""
-    def __init__(self, value):
+    def __init__(self, value: str) -> None:
         """Initialize the Exception"""
         Exception.__init__(self)
         self.value = value
 
-    def __str__(self):
+    def __str__(self) -> str:
         """Return the String value of the Exception"""
         return repr(self.value)

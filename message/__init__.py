@@ -172,7 +172,7 @@ class SetValidationError(Exception):
         """Initialize the Set Validation Error"""
         self._err_msg = err_msg
         self._err_code = err_code
-        Exception.__init__(self, "[{}] - {}".format(err_code, err_msg))
+        Exception.__init__(self, f"[{err_code}] - {err_msg}")
 
     def get_error_code(self):
         """Retrieve the Error Code"""

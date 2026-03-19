@@ -69,7 +69,7 @@ class ConfigMgr:
             if key in self._default_cfg_val_map:
                 value = self._default_cfg_val_map[key]
             else:
-                err_msg = "Key [{}] not found".format(key)
+                err_msg = f"Key [{key}] not found"
                 raise MissingConfigError(err_msg)
 
         return value

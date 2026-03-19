@@ -57,9 +57,9 @@ class DetectMotion:
     def act_on_detected_motion(self, gpio_pin):
         """Print Motion Detection details"""
         if GPIO.input(gpio_pin):
-            print("Motion Detected on GPIO Pin {}".format(gpio_pin))
+            print(f"Motion Detected on GPIO Pin {gpio_pin}")
         else:
-            print("No Motion Detected on GPIO Pin {}".format(gpio_pin))
+            print(f"No Motion Detected on GPIO Pin {gpio_pin}")
 
 
 

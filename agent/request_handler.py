@@ -88,9 +88,9 @@ class UspRequestHandler:
 
             resp_msg, resp_record = self._process_request(req_record, req_msg)
             if self._debug:
-                print("Outgoing Response:\n{}".format(resp_msg))
+                print(f"Outgoing Response:\n{resp_msg}")
         except ProtocolValidationError as err:
-            err_msg = "USP Message validation failed: {}".format(err)
+            err_msg = f"USP Message validation failed: {err}"
             self._logger.error("%s", err_msg)
             raise ProtocolViolationError(err_msg)
 
@@ -105,7 +105,7 @@ class UspRequestHandler:
         self._logger.debug("Incoming payload parsed as a USP Record via Protocol Buffers")
 
         if self._debug:
-            debug_msg = "Incoming USP Record:\n{}".format(req_as_record)
+            debug_msg = f"Incoming USP Record:\n{req_as_record}"
             self._logger.debug("%s", debug_msg)
 
         return req_as_record
@@ -144,7 +144,7 @@ class UspRequestHandler:
         self._logger.debug("Incoming payload parsed as a USP Message via Protocol Buffers")
 
         if self._debug:
-            debug_msg = "Incoming USP Message:\n{}".format(req_as_msg)
+            debug_msg = f"Incoming USP Message:\n{req_as_msg}"
             self._logger.debug("%s", debug_msg)
 
         return req_as_msg
@@ -448,12 +448,12 @@ class UspRequestHandler:
                 resp_msg.body.response.operate_resp.operation_results.extend(op_result_list)
             else:
                 # Invalid Command - return an Error
-                err_msg = "Operate Failure: invalid command - {}".format(command)
+                err_msg = f"Operate Failure: invalid command - {command}"
                 usp_err_msg = utils.UspErrMsg(req_msg.header.msg_id)
                 resp_msg = usp_err_msg.generate_error(9000, err_msg)
         else:
             # Unknown agent product class - return an Error
-            err_msg = "Operate Failure: unknown product class - {}".format(product_class)
+            err_msg = f"Operate Failure: unknown product class - {product_class}"
             usp_err_msg = utils.UspErrMsg(req_msg.header.msg_id)
             resp_msg = usp_err_msg.generate_error(9000, err_msg)
 
@@ -523,11 +523,11 @@ class UspRequestHandler:
                     pass
                 else:
                     err_code = 9000
-                    err_msg = "Non-existent obj_path encountered - {}".format(partial_path)
+                    err_msg = f"Non-existent obj_path encountered - {partial_path}"
                     raise SetValidationError(err_code, err_msg)
         except agent_db.NoSuchPathError:
             err_code = 9000
-            err_msg = "Invalid obj_path encountered - {}".format(partial_path)
+            err_msg = f"Invalid obj_path encountered - {partial_path}"
             raise SetValidationError(err_code, err_msg)
 
         return affected_path_list
@@ -572,7 +572,7 @@ class SetValidationError(Exception):
         """Initialize the Set Validation Error"""
         self._err_msg = err_msg
         self._err_code = err_code
-        Exception.__init__(self, "[{}] - {}".format(err_code, err_msg))
+        Exception.__init__(self, f"[{err_code}] - {err_msg}")
 
     def get_error_code(self):
         """Retrieve the Error Code"""
