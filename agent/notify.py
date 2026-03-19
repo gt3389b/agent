@@ -92,13 +92,11 @@ class BootNotification(Notification):
         first_entry = True
         self._init_notif(notif_msg)
 
-        # Additional parameters to include with Boot! notification
-        boot_param_list = [
-            "Device.DeviceInfo.ManufacturerOUI",
-            "Device.DeviceInfo.ProductClass",
-            "Device.DeviceInfo.SerialNumber",
-            "Device.LocalAgent.X_ARRIS-COM_IPAddr",
-        ]
+        # Build the boot param list from the DB BootParameter table (TR-369 compliant).
+        # Look up which controller index has EndpointID matching our to_id, then read its
+        # BootParameter.{i}.ParameterName entries.  Fall back to sensible defaults if the
+        # table is not configured.
+        boot_param_list = self._load_boot_param_list()
 
         notif_msg.body.request.notify.event.obj_path = "Device.LocalAgent."
         notif_msg.body.request.notify.event.event_name = "Boot!"
@@ -124,6 +122,70 @@ class BootNotification(Notification):
         notif_msg.body.request.notify.event.params["BootParameterMap"] = "{ " + map_as_str + " }"
 
         return notif_msg
+
+    def _load_boot_param_list(self):
+        """Return the list of parameter paths for the Boot! BootParameterMap.
+
+        Reads ``Device.LocalAgent.Controller.{n}.BootParameter.{m}.ParameterName``
+        for the controller whose EndpointID matches ``self._to_id``.  Only entries
+        with ``Enable == True`` (or missing/unset) are included.
+
+        Falls back to a hardcoded default list if the table is not populated so
+        that existing deployments without the BootParameter table still work.
+        """
+        _DEFAULT_BOOT_PARAMS = [
+            "Device.DeviceInfo.ManufacturerOUI",
+            "Device.DeviceInfo.ProductClass",
+            "Device.DeviceInfo.SerialNumber",
+            "Device.LocalAgent.X_ARRIS-COM_IPAddr",
+        ]
+
+        try:
+            num_controllers = int(self._db.get("Device.LocalAgent.ControllerNumberOfEntries"))
+        except Exception:
+            return _DEFAULT_BOOT_PARAMS
+
+        # Find the controller index matching our destination endpoint ID
+        ctrl_num = None
+        for n in range(1, num_controllers + 1):
+            try:
+                eid = self._db.get(f"Device.LocalAgent.Controller.{n}.EndpointID")
+                if eid == self._to_id:
+                    ctrl_num = n
+                    break
+            except Exception:
+                continue
+
+        if ctrl_num is None:
+            return _DEFAULT_BOOT_PARAMS
+
+        # Read all enabled BootParameter instances
+        try:
+            bp_instances = self._db.find_instances(
+                f"Device.LocalAgent.Controller.{ctrl_num}.BootParameter."
+            )
+        except Exception:
+            return _DEFAULT_BOOT_PARAMS
+
+        if not bp_instances:
+            return _DEFAULT_BOOT_PARAMS
+
+        params = []
+        for inst_path in bp_instances:
+            # inst_path is e.g. "Device.LocalAgent.Controller.1.BootParameter.1."
+            try:
+                enabled = self._db.get(inst_path + "Enable")
+                if isinstance(enabled, str):
+                    enabled = enabled.lower() == "true"
+                if not enabled:
+                    continue
+                param_name = self._db.get(inst_path + "ParameterName")
+                if param_name:
+                    params.append(param_name)
+            except Exception:
+                continue
+
+        return params if params else _DEFAULT_BOOT_PARAMS
 
 
 class ValueChangeNotification(Notification):

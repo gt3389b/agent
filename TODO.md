@@ -957,7 +957,7 @@
 
 ---
 
-### 🟢 TODO-011: Replace Hard-coded List (Notifications)
+### ✅ ~~TODO-011: Replace Hard-coded List (Notifications)~~ (COMPLETED)
 **Priority**: LOW  
 **Location**: `agent/notify.py:94`
 
@@ -2001,7 +2001,7 @@ string destination_id = 15;  // R-MTP.4e: target endpoint for Notify messages
 ### Low Priority (As Needed)
 24. ⬜ **TODO-009**: File cleanup *(3–4 hrs)*
 25. ⬜ **TODO-010**: Better ID handling *(4–6 hrs)*
-26. ⬜ **TODO-011**: Notification list *(4–6 hrs)*
+26. ✅ **TODO-011**: Notification list — **COMPLETED**
 27. ⬜ **TODO-012**: Message binding *(2–4 hrs)*
 28. ⬜ **TODO-016**: Linting/formatting *(4–6 hrs)*
 29. ⬜ **TODO-018**: Architecture docs *(12–16 hrs)*
