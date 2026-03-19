@@ -378,58 +378,70 @@ class Database:
 
     # @DB_INSERT_SUMMARY_METRIC.time()
     def insert(self, partial_path):
-        """Insert a new record in the table"""
+        """Insert a new object instance for any multi-instance path in the DM.
+
+        Returns the new instance number.
+        """
         logger = logging.getLogger(self.__class__.__name__)
 
-        # Check to see if the returned list is not empty
-        if self.find_impl_objects(partial_path, True):
-            dm_regex_str = partial_path
-            dm_regex_str = re.sub(r'\{(.+?)\}', '{i}', dm_regex_str)
-            dm_regex_str = re.sub(r'\.\d+\.', '.{i}.', dm_regex_str)
-            logger.debug("insert: Using regex \"%s\" to validate Path [%s] is in the Supported Insert Path List",
-                         dm_regex_str, partial_path)
-
-            if dm_regex_str in self._supported_insert_path_list:
-                next_inst_num_path = partial_path + "__NextInstNum__"
-                with self._new_inst_num_lock:
-                    next_inst_num = self.get(next_inst_num_path)
-                    self.update(next_inst_num_path, next_inst_num + 1)
-
-                if dm_regex_str == "Device.Services.HomeAutomation.{i}.Camera.{i}.Pic.":
-                    self._db[partial_path + str(next_inst_num) + ".URL"] = ""
-                    self._save()
-                else:
-                    raise NotImplementedError()
-            else:
-                raise NoSuchPathError(partial_path)
-        else:
+        # Verify the path exists as a multi-instance object in the DM
+        if not self.find_impl_objects(partial_path, True):
             raise NoSuchPathError(partial_path)
 
+        # Derive the generic DM path (strip any instance numbers already present)
+        dm_path = self._generic_dm_path(partial_path)
+
+        with self._new_inst_num_lock:
+            # Read or initialise the next-instance counter stored at the TABLE level
+            next_inst_num_key = partial_path + "__NextInstNum__"
+            next_inst_num = self._db.get(next_inst_num_key, 1)
+
+            inst_path = partial_path + str(next_inst_num) + "."
+
+            # Create DB entries for every leaf parameter defined in the DM for this instance type
+            # e.g. dm_path = "Device.LocalAgent.Subscription."
+            #      inst_dm_prefix = "Device.LocalAgent.Subscription.{i}."
+            inst_dm_prefix = dm_path + "{i}."
+            created_any = False
+            for dm_key in self._dm:
+                if dm_key.startswith(inst_dm_prefix):
+                    param_suffix = dm_key[len(inst_dm_prefix):]
+                    # Skip nested multi-instance objects (contain another {i})
+                    if "{i}" in param_suffix:
+                        continue
+                    # Only leaf parameters (no further sub-object dots)
+                    if "." not in param_suffix:
+                        self._db[inst_path + param_suffix] = ""
+                        created_any = True
+
+            if not created_any:
+                raise NoSuchPathError(partial_path)
+
+            # Bump the counter and persist
+            self._db[next_inst_num_key] = next_inst_num + 1
+            self._save()
+
+        logger.info("insert: Created instance %s", inst_path)
         return next_inst_num
 
     # @DB_DELETE_SUMMARY_METRIC.time()
     def delete(self, partial_path):
-        """Remove an existing record from the table"""
+        """Remove an existing object instance and all its parameters."""
         logger = logging.getLogger(self.__class__.__name__)
 
-        # Check to see if the returned list is not empty
-        if self.find_objects(partial_path):
-            dm_regex_str = partial_path
-            dm_regex_str = re.sub(r'\{(.+?)\}', '{i}', dm_regex_str)
-            dm_regex_str = re.sub(r'\.\d+\.', '.{i}.', dm_regex_str)
-            logger.debug("delete: Using regex \"%s\" to validate Path [%s] is in the Supported Delete Path List",
-                         dm_regex_str, partial_path)
-
-            if dm_regex_str in self._supported_delete_path_list:
-                if dm_regex_str == "Device.Services.HomeAutomation.{i}.Camera.{i}.Pic.{i}.":
-                    del self._db[partial_path + "URL"]
-                    self._save()
-                else:
-                    raise NotImplementedError()
-            else:
-                raise NoSuchPathError(partial_path)
-        else:
+        # Verify the object exists in the DB
+        if not self.find_objects(partial_path):
             raise NoSuchPathError(partial_path)
+
+        # Build a regex matching all keys under this instance path
+        db_regex = self._db_regex(partial_path, True)
+        keys_to_delete = [k for k in list(self._db.keys()) if re.fullmatch(db_regex, k)]
+
+        for key in keys_to_delete:
+            del self._db[key]
+
+        self._save()
+        logger.info("delete: Removed %d keys under %s", len(keys_to_delete), partial_path)
 
     def _db_regex(self, path, partial_path):
         """Generate a regex for determining whether or note a path is in the DB"""

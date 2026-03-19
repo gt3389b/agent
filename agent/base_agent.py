@@ -32,8 +32,12 @@ SOFTWARE.
 import logging
 import asyncio
 from abc import ABC, abstractmethod
-from message.request import GetRequest, SetRequest, OperateRequest, GetSupportedDMRequest, GetInstancesRequest
-from message.response import GetResponse, SetResponse, OperateResponse, GetSupportedDMResponse, GetInstancesResponse
+from message.request import (GetRequest, SetRequest, OperateRequest, GetSupportedDMRequest,
+                              GetInstancesRequest, AddRequest, DeleteRequest,
+                              GetSupportedProtocolRequest)
+from message.response import (GetResponse, SetResponse, OperateResponse, GetSupportedDMResponse,
+                               GetInstancesResponse, AddResponse, DeleteResponse,
+                               GetSupportedProtocolResponse)
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +110,12 @@ class BaseAgent(ABC):
                 response = await self.on_get_supported_dm_request(request)
             elif isinstance(request, GetInstancesRequest):
                 response = await self.on_get_instances_request(request)
+            elif isinstance(request, AddRequest):
+                response = await self.on_add_request(request)
+            elif isinstance(request, DeleteRequest):
+                response = await self.on_delete_request(request)
+            elif isinstance(request, GetSupportedProtocolRequest):
+                response = await self.on_get_supported_protocol_request(request)
             else:
                 self._logger.warning(f"Unhandled request type: {type(request)}")
                 response = None
@@ -347,7 +357,82 @@ class BaseAgent(ABC):
                 instances[obj_path] = []
         
         return GetInstancesResponse(msg_id=request.msg_id, instances=instances)
-    
+
+    async def on_add_request(self, request):
+        """
+        Handle Add request - create new object instances
+
+        Args:
+            request (AddRequest): Request with .create_objs list
+
+        Returns:
+            AddResponse: Response with .created_obj_results
+        """
+        self._logger.info(f"Processing Add request for {len(request.create_objs)} objects")
+        results = []
+
+        for obj in request.create_objs:
+            obj_path = obj['obj_path']
+            param_settings = obj.get('param_settings', {})
+            try:
+                inst_num = self._db.insert(obj_path)
+                inst_path = obj_path + str(inst_num) + '.'
+
+                # Apply any provided param_settings to the new instance
+                for param, value in param_settings.items():
+                    try:
+                        self._db.update(inst_path + param, value)
+                    except Exception:
+                        pass  # Best-effort; param may not exist in DB
+
+                self._logger.info(f"  Created {inst_path}")
+                results.append({'requested_path': obj_path, 'instantiated_path': inst_path})
+            except Exception as e:
+                self._logger.warning(f"  Add {obj_path} failed: {e}")
+                results.append({'requested_path': obj_path, 'error': (7016, str(e))})
+
+        return AddResponse(msg_id=request.msg_id, created_obj_results=results)
+
+    async def on_delete_request(self, request):
+        """
+        Handle Delete request - remove object instances
+
+        Args:
+            request (DeleteRequest): Request with .obj_paths list
+
+        Returns:
+            DeleteResponse: Response with .deleted_obj_results
+        """
+        self._logger.info(f"Processing Delete request for {len(request.obj_paths)} paths")
+        results = []
+
+        for obj_path in request.obj_paths:
+            try:
+                self._db.delete(obj_path)
+                self._logger.info(f"  Deleted {obj_path}")
+                results.append({'requested_path': obj_path, 'affected_paths': [obj_path]})
+            except Exception as e:
+                self._logger.warning(f"  Delete {obj_path} failed: {e}")
+                results.append({'requested_path': obj_path, 'error': (7016, str(e))})
+
+        return DeleteResponse(msg_id=request.msg_id, deleted_obj_results=results)
+
+    async def on_get_supported_protocol_request(self, request):
+        """
+        Handle GetSupportedProtocol request - return agent's supported versions
+
+        Args:
+            request (GetSupportedProtocolRequest): Request with .controller_supported_protocol_versions
+
+        Returns:
+            GetSupportedProtocolResponse: Response with agent's supported versions
+        """
+        self._logger.info("Processing GetSupportedProtocol request")
+        return GetSupportedProtocolResponse(
+            msg_id=request.msg_id,
+            agent_supported_protocol_versions="1.3",
+        )
+
     async def respond(self, response, context):
         """
         Send response message

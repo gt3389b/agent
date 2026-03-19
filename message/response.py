@@ -267,16 +267,18 @@ class OperateResponse(UspMessage):
         if operate_resp.operation_results:
             op_result = operate_resp.operation_results[0]
             command = op_result.executed_command
-            
-            if op_result.req_output_args.HasField('cmd_failure'):
-                # Failed
-                failure = op_result.req_output_args.cmd_failure
-                error = (failure.err_code, failure.err_msg)
+
+            # cmd_failure is a oneof field at the op_result level
+            oper_field = op_result.WhichOneof('operation_resp')
+            if oper_field == 'cmd_failure':
+                error = (op_result.cmd_failure.err_code, op_result.cmd_failure.err_msg)
                 output_args = None
-            else:
-                # Success
+            elif oper_field == 'req_output_args':
                 error = None
                 output_args = dict(op_result.req_output_args.output_args)
+            else:
+                error = None
+                output_args = {}
         else:
             command = ""
             output_args = {}
@@ -469,21 +471,181 @@ RESPONSE_TYPES = {
 }
 
 
+class AddResponse(UspMessage):
+    """USP Add Response - results of object creation"""
+
+    def __init__(self, created_obj_results, **kwargs):
+        """
+        Args:
+            created_obj_results (list): List of dicts:
+                On success: {'requested_path', 'instantiated_path', 'unique_keys', 'param_errs'}
+                On failure: {'requested_path', 'error': (err_code, err_msg)}
+        """
+        super().__init__(**kwargs)
+        self.created_obj_results = created_obj_results
+
+    def to_protobuf(self):
+        msg = usp_msg_pb2.Msg()
+        msg.header.msg_id = self.msg_id
+        msg.header.msg_type = usp_msg_pb2.Header.ADD_RESP
+
+        add_resp = msg.body.response.add_resp
+        for result in self.created_obj_results:
+            obj_result = add_resp.created_obj_results.add()
+            obj_result.requested_path = result['requested_path']
+
+            if 'error' in result:
+                err_code, err_msg = result['error']
+                obj_result.oper_status.oper_failure.err_code = err_code
+                obj_result.oper_status.oper_failure.err_msg = err_msg
+            else:
+                success = obj_result.oper_status.oper_success
+                success.instantiated_path = result.get('instantiated_path', '')
+                for k, v in result.get('unique_keys', {}).items():
+                    success.unique_keys[k] = v
+                for pe in result.get('param_errs', []):
+                    param_err = success.param_errs.add()
+                    param_err.param = pe['param']
+                    param_err.err_code = pe['err_code']
+                    param_err.err_msg = pe['err_msg']
+
+        return msg
+
+    @classmethod
+    def from_protobuf(cls, pb_msg, from_id=None, to_id=None):
+        results = []
+        for obj_result in pb_msg.body.response.add_resp.created_obj_results:
+            if obj_result.oper_status.HasField('oper_failure'):
+                f = obj_result.oper_status.oper_failure
+                results.append({
+                    'requested_path': obj_result.requested_path,
+                    'error': (f.err_code, f.err_msg),
+                })
+            else:
+                s = obj_result.oper_status.oper_success
+                results.append({
+                    'requested_path': obj_result.requested_path,
+                    'instantiated_path': s.instantiated_path,
+                    'unique_keys': dict(s.unique_keys),
+                    'param_errs': [
+                        {'param': e.param, 'err_code': e.err_code, 'err_msg': e.err_msg}
+                        for e in s.param_errs
+                    ],
+                })
+        return cls(msg_id=pb_msg.header.msg_id, from_id=from_id, to_id=to_id,
+                   created_obj_results=results)
+
+    def __repr__(self):
+        return f"AddResponse(msg_id={self.msg_id}, results={len(self.created_obj_results)})"
+
+
+class DeleteResponse(UspMessage):
+    """USP Delete Response - results of object deletion"""
+
+    def __init__(self, deleted_obj_results, **kwargs):
+        """
+        Args:
+            deleted_obj_results (list): List of dicts:
+                On success: {'requested_path', 'affected_paths': [...]}
+                On failure: {'requested_path', 'error': (err_code, err_msg)}
+        """
+        super().__init__(**kwargs)
+        self.deleted_obj_results = deleted_obj_results
+
+    def to_protobuf(self):
+        msg = usp_msg_pb2.Msg()
+        msg.header.msg_id = self.msg_id
+        msg.header.msg_type = usp_msg_pb2.Header.DELETE_RESP
+
+        delete_resp = msg.body.response.delete_resp
+        for result in self.deleted_obj_results:
+            obj_result = delete_resp.deleted_obj_results.add()
+            obj_result.requested_path = result['requested_path']
+
+            if 'error' in result:
+                err_code, err_msg = result['error']
+                obj_result.oper_status.oper_failure.err_code = err_code
+                obj_result.oper_status.oper_failure.err_msg = err_msg
+            else:
+                success = obj_result.oper_status.oper_success
+                success.affected_paths.extend(result.get('affected_paths', []))
+
+        return msg
+
+    @classmethod
+    def from_protobuf(cls, pb_msg, from_id=None, to_id=None):
+        results = []
+        for obj_result in pb_msg.body.response.delete_resp.deleted_obj_results:
+            if obj_result.oper_status.HasField('oper_failure'):
+                f = obj_result.oper_status.oper_failure
+                results.append({
+                    'requested_path': obj_result.requested_path,
+                    'error': (f.err_code, f.err_msg),
+                })
+            else:
+                s = obj_result.oper_status.oper_success
+                results.append({
+                    'requested_path': obj_result.requested_path,
+                    'affected_paths': list(s.affected_paths),
+                })
+        return cls(msg_id=pb_msg.header.msg_id, from_id=from_id, to_id=to_id,
+                   deleted_obj_results=results)
+
+    def __repr__(self):
+        return f"DeleteResponse(msg_id={self.msg_id}, results={len(self.deleted_obj_results)})"
+
+
+class GetSupportedProtocolResponse(UspMessage):
+    """USP GetSupportedProtocol Response - agent's supported versions"""
+
+    def __init__(self, agent_supported_protocol_versions="1.3", **kwargs):
+        super().__init__(**kwargs)
+        self.agent_supported_protocol_versions = agent_supported_protocol_versions
+
+    def to_protobuf(self):
+        msg = usp_msg_pb2.Msg()
+        msg.header.msg_id = self.msg_id
+        msg.header.msg_type = usp_msg_pb2.Header.GET_SUPPORTED_PROTO_RESP
+        msg.body.response.get_supported_protocol_resp.agent_supported_protocol_versions = \
+            self.agent_supported_protocol_versions
+        return msg
+
+    @classmethod
+    def from_protobuf(cls, pb_msg, from_id=None, to_id=None):
+        resp = pb_msg.body.response.get_supported_protocol_resp
+        return cls(
+            msg_id=pb_msg.header.msg_id, from_id=from_id, to_id=to_id,
+            agent_supported_protocol_versions=resp.agent_supported_protocol_versions,
+        )
+
+    def __repr__(self):
+        return f"GetSupportedProtocolResponse(msg_id={self.msg_id}, versions={self.agent_supported_protocol_versions})"
+
+
 def parse_response(pb_msg, from_id=None, to_id=None):
     """
     Parse protobuf message into appropriate response type
-    
+
     Args:
         pb_msg (usp_msg_pb2.Msg): Protobuf message
         from_id (str): Override from_id
         to_id (str): Override to_id
-        
+
     Returns:
         UspMessage: Appropriate response subclass
     """
     msg_type = pb_msg.header.msg_type
-    response_class = RESPONSE_TYPES.get(msg_type)
-    
+    type_map = {
+        usp_msg_pb2.Header.GET_RESP: GetResponse,
+        usp_msg_pb2.Header.SET_RESP: SetResponse,
+        usp_msg_pb2.Header.OPERATE_RESP: OperateResponse,
+        usp_msg_pb2.Header.GET_SUPPORTED_DM_RESP: GetSupportedDMResponse,
+        usp_msg_pb2.Header.GET_INSTANCES_RESP: GetInstancesResponse,
+        usp_msg_pb2.Header.ADD_RESP: AddResponse,
+        usp_msg_pb2.Header.DELETE_RESP: DeleteResponse,
+        usp_msg_pb2.Header.GET_SUPPORTED_PROTO_RESP: GetSupportedProtocolResponse,
+    }
+    response_class = type_map.get(msg_type)
     if response_class:
         return response_class.from_protobuf(pb_msg, from_id, to_id)
     else:

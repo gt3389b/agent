@@ -47,6 +47,54 @@ def _make_ws_agent_db(tmp_path: Path, controller_port: int) -> Path:
     return db_path
 
 
+def _make_uds_agent_db(tmp_path: Path, socket_path: str) -> Path:
+    """Build a minimal UDS-mode agent DB for E2E testing.
+
+    The agent listens on *socket_path*.  No controllers are pre-configured
+    (the controller connects to the agent, not the other way around).
+    A Subscription table entry is pre-seeded so Delete tests have something
+    to remove, and __NextInstNum__ is set to 2 so Add tests get index 2.
+    """
+    db = {
+        "Device.DeviceInfo.Manufacturer": "ARRIS",
+        "Device.DeviceInfo.ManufacturerOUI": "00D09E",
+        "Device.DeviceInfo.ProductClass": "Test",
+        "Device.DeviceInfo.SerialNumber": "T01",
+        "Device.DeviceInfo.ModelName": "PoC-USP-Agent-Test",
+        "Device.DeviceInfo.FriendlyName": "dummy",
+        "Device.LocalAgent.EndpointID": "ops::00D09E-Test-T01",
+        "Device.LocalAgent.AdvertisedDeviceSubtypes": "test",
+        "Device.LocalAgent.HardwareVersion": "laptop",
+        "Device.LocalAgent.SoftwareVersion": "0.0.1-alpha",
+        "Device.LocalAgent.SupportedProtocols": "UDS",
+        "Device.LocalAgent.UpTime": "__UPTIME__",
+        "Device.LocalAgent.X_ARRIS-COM_IPAddr": "__IPADDR__",
+        "Device.LocalAgent.MTPNumberOfEntries": "__NUM_ENTRIES__",
+        "Device.LocalAgent.ControllerNumberOfEntries": "__NUM_ENTRIES__",
+        "Device.LocalAgent.SubscriptionNumberOfEntries": "__NUM_ENTRIES__",
+        # UDS MTP — agent listens on this socket
+        "Device.LocalAgent.MTP.1.Enable": True,
+        "Device.LocalAgent.MTP.1.Alias": "e2e-uds-mtp",
+        "Device.LocalAgent.MTP.1.Protocol": "UDS",
+        "Device.LocalAgent.MTP.1.UDS.UnixSocketPath": socket_path,
+        # Pre-seeded subscription so Delete tests have a target
+        "Device.LocalAgent.Subscription.1.Enable": False,
+        "Device.LocalAgent.Subscription.1.Alias": "e2e-pre-seeded",
+        "Device.LocalAgent.Subscription.1.ID": "pre-seeded-sub-1",
+        "Device.LocalAgent.Subscription.1.Recipient": "",
+        "Device.LocalAgent.Subscription.1.CreationDate": "",
+        "Device.LocalAgent.Subscription.1.NotifType": "Event",
+        "Device.LocalAgent.Subscription.1.ReferenceList": "",
+        "Device.LocalAgent.Subscription.1.Persistent": False,
+        "Device.LocalAgent.Subscription.1.TimeToLive": 0,
+        # Next Add will create Subscription.2
+        "Device.LocalAgent.Subscription.__NextInstNum__": 2,
+    }
+    db_path = tmp_path / "e2e-uds-agent-db.json"
+    db_path.write_text(json.dumps(db, indent=2))
+    return db_path
+
+
 @pytest.fixture
 def e2e_ws_db_8080(tmp_path):
     """Agent DB fixture with WebSocket controller on port 8080."""
@@ -57,6 +105,16 @@ def e2e_ws_db_8080(tmp_path):
 def e2e_ws_db_9080(tmp_path):
     """Agent DB fixture with WebSocket controller on port 9080."""
     return _make_ws_agent_db(tmp_path, 9080)
+
+
+@pytest.fixture
+def e2e_uds_db(tmp_path):
+    """Agent DB fixture for UDS agent tests. Returns (db_path, socket_path)."""
+    import os, uuid
+    # macOS limits AF_UNIX paths to 104 chars; use /tmp with a short unique name.
+    socket_path = f"/tmp/e2e-usp-{uuid.uuid4().hex[:8]}.sock"
+    db_path = _make_uds_agent_db(tmp_path, socket_path)
+    return db_path, socket_path
 
 
 @pytest.fixture(autouse=True)

@@ -344,6 +344,133 @@ class GetInstancesRequest(UspMessage):
         return f"GetInstancesRequest(msg_id={self.msg_id}, obj_paths={self.obj_paths})"
 
 
+class AddRequest(UspMessage):
+    """USP Add Request - create new multi-instance object entries"""
+
+    def __init__(self, create_objs, allow_partial=True, **kwargs):
+        """
+        Args:
+            create_objs (list): List of dicts with keys:
+                'obj_path' (str): Object path to create instance under
+                'param_settings' (dict): {param_name: value} initial values
+            allow_partial (bool): Allow partial success across objects
+        """
+        super().__init__(**kwargs)
+        self.create_objs = create_objs if isinstance(create_objs, list) else [create_objs]
+        self.allow_partial = allow_partial
+
+    def to_protobuf(self):
+        msg = usp_msg_pb2.Msg()
+        msg.header.msg_id = self.msg_id
+        msg.header.msg_type = usp_msg_pb2.Header.ADD
+
+        add_req = msg.body.request.add
+        add_req.allow_partial = self.allow_partial
+
+        for obj in self.create_objs:
+            create_obj = add_req.create_objs.add()
+            create_obj.obj_path = obj['obj_path']
+            for param, value in obj.get('param_settings', {}).items():
+                setting = create_obj.param_settings.add()
+                setting.param = param
+                setting.value = str(value)
+                setting.required = False
+
+        return msg
+
+    @classmethod
+    def from_protobuf(cls, pb_msg, from_id=None, to_id=None):
+        add_req = pb_msg.body.request.add
+        create_objs = []
+        for create_obj in add_req.create_objs:
+            create_objs.append({
+                'obj_path': create_obj.obj_path,
+                'param_settings': {s.param: s.value for s in create_obj.param_settings},
+            })
+        return cls(
+            msg_id=pb_msg.header.msg_id,
+            from_id=from_id,
+            to_id=to_id,
+            create_objs=create_objs,
+            allow_partial=add_req.allow_partial,
+        )
+
+    def __repr__(self):
+        return f"AddRequest(msg_id={self.msg_id}, create_objs={[o['obj_path'] for o in self.create_objs]})"
+
+
+class DeleteRequest(UspMessage):
+    """USP Delete Request - remove existing multi-instance object entries"""
+
+    def __init__(self, obj_paths, allow_partial=True, **kwargs):
+        """
+        Args:
+            obj_paths (list): Instance paths to delete (e.g. 'Device.LocalAgent.Subscription.1.')
+            allow_partial (bool): Allow partial success
+        """
+        super().__init__(**kwargs)
+        self.obj_paths = obj_paths if isinstance(obj_paths, list) else [obj_paths]
+        self.allow_partial = allow_partial
+
+    def to_protobuf(self):
+        msg = usp_msg_pb2.Msg()
+        msg.header.msg_id = self.msg_id
+        msg.header.msg_type = usp_msg_pb2.Header.DELETE
+
+        delete_req = msg.body.request.delete
+        delete_req.allow_partial = self.allow_partial
+        delete_req.obj_paths.extend(self.obj_paths)
+
+        return msg
+
+    @classmethod
+    def from_protobuf(cls, pb_msg, from_id=None, to_id=None):
+        delete_req = pb_msg.body.request.delete
+        return cls(
+            msg_id=pb_msg.header.msg_id,
+            from_id=from_id,
+            to_id=to_id,
+            obj_paths=list(delete_req.obj_paths),
+            allow_partial=delete_req.allow_partial,
+        )
+
+    def __repr__(self):
+        return f"DeleteRequest(msg_id={self.msg_id}, obj_paths={self.obj_paths})"
+
+
+class GetSupportedProtocolRequest(UspMessage):
+    """USP GetSupportedProtocol Request - negotiate protocol version"""
+
+    def __init__(self, controller_supported_protocol_versions="", **kwargs):
+        """
+        Args:
+            controller_supported_protocol_versions (str): Comma-separated versions the controller supports
+        """
+        super().__init__(**kwargs)
+        self.controller_supported_protocol_versions = controller_supported_protocol_versions
+
+    def to_protobuf(self):
+        msg = usp_msg_pb2.Msg()
+        msg.header.msg_id = self.msg_id
+        msg.header.msg_type = usp_msg_pb2.Header.GET_SUPPORTED_PROTO
+        msg.body.request.get_supported_protocol.controller_supported_protocol_versions = \
+            self.controller_supported_protocol_versions
+        return msg
+
+    @classmethod
+    def from_protobuf(cls, pb_msg, from_id=None, to_id=None):
+        gsp = pb_msg.body.request.get_supported_protocol
+        return cls(
+            msg_id=pb_msg.header.msg_id,
+            from_id=from_id,
+            to_id=to_id,
+            controller_supported_protocol_versions=gsp.controller_supported_protocol_versions,
+        )
+
+    def __repr__(self):
+        return f"GetSupportedProtocolRequest(msg_id={self.msg_id})"
+
+
 # Request type mapping for deserialization
 REQUEST_TYPES = {
     usp_msg_pb2.Header.GET: GetRequest,
@@ -351,6 +478,9 @@ REQUEST_TYPES = {
     usp_msg_pb2.Header.OPERATE: OperateRequest,
     usp_msg_pb2.Header.GET_SUPPORTED_DM: GetSupportedDMRequest,
     usp_msg_pb2.Header.GET_INSTANCES: GetInstancesRequest,
+    usp_msg_pb2.Header.ADD: AddRequest,
+    usp_msg_pb2.Header.DELETE: DeleteRequest,
+    usp_msg_pb2.Header.GET_SUPPORTED_PROTO: GetSupportedProtocolRequest,
 }
 
 
