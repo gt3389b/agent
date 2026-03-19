@@ -14,8 +14,7 @@ import websockets
 from message import usp_msg_pb2, usp_record_pb2
 from agent.multi_mtp_agent import MultiMTPAgent
 
-# Skip these tests - they require test database to be configured for test ports
-pytestmark = pytest.mark.skip(reason="Requires test database configured for test ports (9082)")
+
 
 
 class USPController:
@@ -186,9 +185,9 @@ async def controller():
 
 
 @pytest.mark.asyncio
-async def test_get_operation(controller):
+async def test_get_operation(controller, e2e_ws_db_8080):
     """Test: Get operation retrieves parameter values"""
-    agent_task = asyncio.create_task(run_agent(3))
+    agent_task = asyncio.create_task(run_agent(3, e2e_ws_db_8080))
     await asyncio.sleep(1)
     
     await controller.send_get("Device.LocalAgent.EndpointID")
@@ -201,9 +200,9 @@ async def test_get_operation(controller):
 
 
 @pytest.mark.asyncio
-async def test_set_operation(controller):
+async def test_set_operation(controller, e2e_ws_db_8080):
     """Test: Set operation updates parameter values"""
-    agent_task = asyncio.create_task(run_agent(3))
+    agent_task = asyncio.create_task(run_agent(3, e2e_ws_db_8080))
     await asyncio.sleep(1)
     
     await controller.send_set("Device.LocalAgent.Controller.1.PeriodicNotifInterval", "120")
@@ -215,9 +214,9 @@ async def test_set_operation(controller):
 
 
 @pytest.mark.asyncio
-async def test_get_supported_dm_operation(controller):
+async def test_get_supported_dm_operation(controller, e2e_ws_db_8080):
     """Test: GetSupportedDM returns data model structure"""
-    agent_task = asyncio.create_task(run_agent(3))
+    agent_task = asyncio.create_task(run_agent(3, e2e_ws_db_8080))
     await asyncio.sleep(1)
     
     await controller.send_get_supported_dm("Device.")
@@ -239,9 +238,9 @@ async def test_get_supported_dm_operation(controller):
 
 
 @pytest.mark.asyncio
-async def test_get_instances_operation(controller):
+async def test_get_instances_operation(controller, e2e_ws_db_8080):
     """Test: GetInstances returns instance paths"""
-    agent_task = asyncio.create_task(run_agent(3))
+    agent_task = asyncio.create_task(run_agent(3, e2e_ws_db_8080))
     await asyncio.sleep(1)
     
     await controller.send_get_instances("Device.LocalAgent.Controller.")
@@ -253,9 +252,9 @@ async def test_get_instances_operation(controller):
 
 
 @pytest.mark.asyncio
-async def test_operate_returns_not_supported(controller):
+async def test_operate_returns_not_supported(controller, e2e_ws_db_8080):
     """Test: Operate operation returns not supported by default"""
-    agent_task = asyncio.create_task(run_agent(3))
+    agent_task = asyncio.create_task(run_agent(3, e2e_ws_db_8080))
     await asyncio.sleep(1)
     
     await controller.send_operate("Device.Reboot()")
@@ -268,9 +267,9 @@ async def test_operate_returns_not_supported(controller):
 
 
 @pytest.mark.asyncio
-async def test_boot_notification(controller):
+async def test_boot_notification(controller, e2e_ws_db_8080):
     """Test: Boot! notification sent on connect"""
-    agent_task = asyncio.create_task(run_agent(3))
+    agent_task = asyncio.create_task(run_agent(3, e2e_ws_db_8080))
     await asyncio.sleep(1)
     
     assert len(controller.received) >= 1
@@ -280,15 +279,15 @@ async def test_boot_notification(controller):
     msg.ParseFromString(boot_record.no_session_context.payload)
     
     assert msg.header.msg_type == usp_msg_pb2.Header.NOTIFY
-    assert "Boot!" in msg.body.request.notify.event[0].event_name
+    assert "Boot!" in msg.body.request.notify.event.event_name
     
     agent_task.cancel()
 
 
 @pytest.mark.asyncio
-async def test_multiple_operations_sequence(controller):
+async def test_multiple_operations_sequence(controller, e2e_ws_db_8080):
     """Test: Multiple operations in sequence"""
-    agent_task = asyncio.create_task(run_agent(5))
+    agent_task = asyncio.create_task(run_agent(5, e2e_ws_db_8080))
     await asyncio.sleep(1)
     
     # Send Get
@@ -314,9 +313,9 @@ async def test_multiple_operations_sequence(controller):
 
 
 @pytest.mark.asyncio
-async def test_error_response_on_invalid_path(controller):
+async def test_error_response_on_invalid_path(controller, e2e_ws_db_8080):
     """Test: Error response for invalid parameter path"""
-    agent_task = asyncio.create_task(run_agent(3))
+    agent_task = asyncio.create_task(run_agent(3, e2e_ws_db_8080))
     await asyncio.sleep(1)
     
     await controller.send_get("Device.NonExistent.Parameter")
@@ -328,9 +327,9 @@ async def test_error_response_on_invalid_path(controller):
     agent_task.cancel()
 
 
-async def run_agent(seconds):
+async def run_agent(seconds, db_path):
     """Run agent for specified duration"""
-    agent = MultiMTPAgent('database/test-dm.json', 'database/runtime/test-db.json')
+    agent = MultiMTPAgent('database/test-dm.json', str(db_path))
     try:
         await asyncio.wait_for(agent.start(), timeout=seconds)
     except asyncio.TimeoutError:

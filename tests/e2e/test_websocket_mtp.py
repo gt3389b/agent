@@ -17,9 +17,6 @@ from message import usp_msg_pb2, usp_record_pb2
 from agent.multi_mtp_agent import MultiMTPAgent
 from mtp.websocket_binding import WebSocketUspBinding
 
-# Skip these tests - they require full agent startup with test database
-pytestmark = pytest.mark.skip(reason="Requires test database configured for test ports and mock infrastructure")
-
 
 @pytest_asyncio.fixture
 async def mock_controller():
@@ -173,10 +170,10 @@ def create_set_response(request_msg):
 
 
 @pytest.mark.asyncio
-async def test_agent_sends_boot_notification(mock_controller):
+async def test_agent_sends_boot_notification(mock_controller, e2e_ws_db_9080):
     """Test: Agent sends Boot! notification on connect"""
     # Start agent
-    agent_task = asyncio.create_task(run_agent_for_seconds(2))
+    agent_task = asyncio.create_task(run_agent_for_seconds(2, e2e_ws_db_9080))
     
     # Wait for Boot!
     await asyncio.sleep(1)
@@ -189,15 +186,15 @@ async def test_agent_sends_boot_notification(mock_controller):
     usp_msg.ParseFromString(boot_msg.no_session_context.payload)
     
     assert usp_msg.header.msg_type == usp_msg_pb2.Header.NOTIFY
-    assert usp_msg.body.request.notify.event[0].event_name == "Device.Boot!"
+    assert usp_msg.body.request.notify.event.event_name == "Boot!"
     
     agent_task.cancel()
 
 
 @pytest.mark.asyncio
-async def test_get_request_response_cycle(mock_controller):
+async def test_get_request_response_cycle(mock_controller, e2e_ws_db_9080):
     """Test: Full Get request/response cycle"""
-    agent_task = asyncio.create_task(run_agent_for_seconds(5))
+    agent_task = asyncio.create_task(run_agent_for_seconds(5, e2e_ws_db_9080))
     await asyncio.sleep(1)  # Wait for agent to connect
     
     # Send Get request
@@ -216,9 +213,9 @@ async def test_get_request_response_cycle(mock_controller):
 
 
 @pytest.mark.asyncio
-async def test_set_request_updates_database(mock_controller):
+async def test_set_request_updates_database(mock_controller, e2e_ws_db_9080):
     """Test: Set request updates agent database"""
-    agent_task = asyncio.create_task(run_agent_for_seconds(5))
+    agent_task = asyncio.create_task(run_agent_for_seconds(5, e2e_ws_db_9080))
     await asyncio.sleep(1)
     
     # Send Set request
@@ -235,9 +232,9 @@ async def test_set_request_updates_database(mock_controller):
 
 
 @pytest.mark.asyncio
-async def test_get_supported_dm_request(mock_controller):
+async def test_get_supported_dm_request(mock_controller, e2e_ws_db_9080):
     """Test: GetSupportedDM request returns data model"""
-    agent_task = asyncio.create_task(run_agent_for_seconds(5))
+    agent_task = asyncio.create_task(run_agent_for_seconds(5, e2e_ws_db_9080))
     await asyncio.sleep(1)
     
     controller_ws = mock_controller['clients'][0]
@@ -252,9 +249,9 @@ async def test_get_supported_dm_request(mock_controller):
 
 
 @pytest.mark.asyncio
-async def test_get_instances_request(mock_controller):
+async def test_get_instances_request(mock_controller, e2e_ws_db_9080):
     """Test: GetInstances request returns instance paths"""
-    agent_task = asyncio.create_task(run_agent_for_seconds(5))
+    agent_task = asyncio.create_task(run_agent_for_seconds(5, e2e_ws_db_9080))
     await asyncio.sleep(1)
     
     controller_ws = mock_controller['clients'][0]
@@ -269,9 +266,9 @@ async def test_get_instances_request(mock_controller):
 
 
 @pytest.mark.asyncio
-async def test_concurrent_requests(mock_controller):
+async def test_concurrent_requests(mock_controller, e2e_ws_db_9080):
     """Test: Agent handles concurrent requests correctly"""
-    agent_task = asyncio.create_task(run_agent_for_seconds(10))
+    agent_task = asyncio.create_task(run_agent_for_seconds(10, e2e_ws_db_9080))
     await asyncio.sleep(1)
     
     controller_ws = mock_controller['clients'][0]
@@ -288,11 +285,12 @@ async def test_concurrent_requests(mock_controller):
     agent_task.cancel()
 
 
+@pytest.mark.skip(reason="Requires 35s runtime; enable manually for periodic notification testing")
 @pytest.mark.asyncio
-async def test_periodic_notification(mock_controller):
+async def test_periodic_notification(mock_controller, e2e_ws_db_9080):
     """Test: Agent sends periodic notifications"""
     # This test requires longer runtime to see periodic
-    agent_task = asyncio.create_task(run_agent_for_seconds(35))
+    agent_task = asyncio.create_task(run_agent_for_seconds(35, e2e_ws_db_9080))
     await asyncio.sleep(1)
     
     initial_count = len(mock_controller['received'])
@@ -310,7 +308,7 @@ async def test_periodic_notification(mock_controller):
         usp_msg = usp_msg_pb2.Msg()
         usp_msg.ParseFromString(msg.no_session_context.payload)
         if (usp_msg.header.msg_type == usp_msg_pb2.Header.NOTIFY and
-            usp_msg.body.request.notify.event[0].event_name == "Device.LocalAgent.Periodic!"):
+                usp_msg.body.request.notify.event.event_name == "Periodic!"):
             periodic_found = True
             break
     
@@ -320,9 +318,9 @@ async def test_periodic_notification(mock_controller):
 
 
 @pytest.mark.asyncio
-async def test_malformed_request_handling(mock_controller):
+async def test_malformed_request_handling(mock_controller, e2e_ws_db_9080):
     """Test: Agent handles malformed requests gracefully"""
-    agent_task = asyncio.create_task(run_agent_for_seconds(5))
+    agent_task = asyncio.create_task(run_agent_for_seconds(5, e2e_ws_db_9080))
     await asyncio.sleep(1)
     
     controller_ws = mock_controller['clients'][0]
@@ -339,9 +337,9 @@ async def test_malformed_request_handling(mock_controller):
 
 
 @pytest.mark.asyncio
-async def test_connection_recovery(mock_controller):
+async def test_connection_recovery(mock_controller, e2e_ws_db_9080):
     """Test: Agent handles connection drop and reconnect"""
-    agent_task = asyncio.create_task(run_agent_for_seconds(10))
+    agent_task = asyncio.create_task(run_agent_for_seconds(10, e2e_ws_db_9080))
     await asyncio.sleep(1)
     
     # Drop connection
@@ -358,9 +356,9 @@ async def test_connection_recovery(mock_controller):
 
 # Helper functions
 
-async def run_agent_for_seconds(seconds):
+async def run_agent_for_seconds(seconds, db_path):
     """Run agent for specified duration"""
-    agent = MultiMTPAgent('database/test-dm.json', 'database/runtime/test-db.json')
+    agent = MultiMTPAgent('database/test-dm.json', str(db_path))
     try:
         await asyncio.wait_for(agent.start(), timeout=seconds)
     except asyncio.TimeoutError:

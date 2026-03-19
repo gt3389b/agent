@@ -250,10 +250,8 @@ class OperateResponse(UspMessage):
         if self.error:
             # Command failed
             err_code, err_msg = self.error
-            op_result.req_output_args.CopyFrom(usp_msg_pb2.OperateResp.OperationResult.CommandFailure(
-                err_code=err_code,
-                err_msg=err_msg
-            ))
+            op_result.cmd_failure.err_code = err_code
+            op_result.cmd_failure.err_msg = err_msg
         else:
             # Command succeeded
             for name, value in self.output_args.items():
