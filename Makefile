@@ -8,10 +8,13 @@ dirs:
 	mkdir -p logs
 
 test:
-	.penv/bin/python -m pytest -q
+	.penv/bin/python3.14 -m pytest -q
 
 test-verbose:
-	.penv/bin/python -m pytest -v
+	.penv/bin/python3.14 -m pytest -v
+
+coverage:
+	.penv/bin/python3.14 -m pytest --cov --cov-report=term-missing -q
 
 schema:
 	protoc --proto_path=schema --python_out=agent schema/usp-msg-1-4.proto

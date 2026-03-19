@@ -1,0 +1,24 @@
+[run]
+source = agent,message,mtp,controller
+omit =
+    # Auto-generated protobuf files
+    */usp_msg_pb2.py
+    */usp_record_pb2.py
+    # Archived / broken-import code
+    */agent/uds_agent_old.py
+    */message/message.py
+    # Hardware-dependent modules (camera, GPIO)
+    */agent/camera.py
+    */agent/camera_ui.py
+    */agent/motion.py
+    # Network-service modules (mDNS)
+    */agent/mdns.py
+    */controller/mdns.py
+    # Protocol-library-dependent (aiocoap)
+    */agent/coap_agent_async.py
+    # Entry-point scripts
+    */agent/main.py
+    */controller/main.py
+
+[report]
+show_missing = True
