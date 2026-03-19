@@ -8,10 +8,10 @@ dirs:
 	mkdir -p logs
 
 test:
-	nose2 --with-coverage
+	.penv/bin/python -m pytest -q
 
 test-verbose:
-	nose2 -v --with-coverage
+	.penv/bin/python -m pytest -v
 
 schema:
 	protoc --proto_path=schema --python_out=agent schema/usp-msg-1-4.proto
