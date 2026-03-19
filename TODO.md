@@ -67,8 +67,8 @@
 
 ## Critical Security & Infrastructure
 
-### 🔴 TODO-001: Upgrade Docker Base Image
-**Priority**: CRITICAL  
+### � TODO-001: Upgrade Docker Base Image
+**Priority**: MEDIUM  
 **Location**: `Dockerfile`  
 **Current**: Ubuntu 16.04 (EOL: April 2021)  
 **Issue**: Security vulnerabilities, no security patches available
@@ -184,61 +184,14 @@
 
 ---
 
-### 🔴 TODO-022: Fix CoAP Agent asyncio.coroutine Deprecation
-**Priority**: HIGH  
-**Location**: `agent/coap_usp_binding.py:75`
+### ~~🔴 TODO-022: Fix CoAP Agent asyncio.coroutine Deprecation~~ ✅ COMPLETED
+**Status**: ✅ **COMPLETED** - March 19, 2026  
+**Location**: `mtp/coap.py`
 
-**Current Code**:
-```python
-@asyncio.coroutine
-def render_post(self, request):
-    # ... CoAP request handling
-```
-
-**Issue**: `@asyncio.coroutine` decorator was removed in Python 3.11+, causing import failures
-
-**Error**:
-```
-AttributeError: module 'asyncio' has no attribute 'coroutine'. Did you mean: 'coroutines'?
-```
-
-**Action Plan**:
-
-1. **Migrate to async/await Syntax**:
-   ```python
-   # Replace @asyncio.coroutine with async def
-   async def render_post(self, request):
-       # ... implementation
-   ```
-
-2. **Update yield from to await**:
-   ```python
-   # Old:
-   result = yield from some_coroutine()
-   
-   # New:
-   result = await some_coroutine()
-   ```
-
-3. **Update aiocoap Usage**:
-   - Review aiocoap 0.4.17 async patterns
-   - Check for any deprecated asyncio APIs
-   - Update context manager usage if needed
-
-4. **Test CoAP Agent**:
-   ```bash
-   python3 -m agent.main -c --coap-port 5683
-   # Verify agent starts without errors
-   # Test CoAP message exchange
-   ```
-
-**Estimated Effort**: 2-4 hours  
-**Dependencies**: None (can be done independently)  
-**Risk**: Low (well-documented migration path)
-
-**References**:
-- [PEP 492 - Coroutines with async/await](https://peps.python.org/pep-0492/)
-- [asyncio migration guide](https://docs.python.org/3/library/asyncio-task.html)
+- Replaced `@asyncio.coroutine` decorator with `async def` on `CoapSendingThread._issue_request()`
+- Replaced `yield from` with `await` on both `aiocoap.Context.create_client_context()` and `context.request().response`
+- Removed dead Python 3.4 compatibility shim for `asyncio.ensure_future`
+- `mtp/coap.py` now imports cleanly on Python 3.11+/3.14; all 118 passing tests remain green
 
 ---
 
@@ -2022,20 +1975,20 @@ string destination_id = 15;  // R-MTP.4e: target endpoint for Notify messages
 5. ⬜ **TODO-029**: Implement originator_id / destination_id on Record *(4–6 hrs)*
 6. ⬜ **TODO-027**: Implement Register & Deregister handlers + USPServices.Trust stub *(12–16 hrs)*
 7. ⬜ **TODO-031**: SET allow_partial + Search Path behavior fix *(3–6 hrs)*
-8. ⬜ **TODO-022**: Fix CoAP asyncio.coroutine (Python 3.11+ compatibility) *(2–4 hrs)*
+8. ✅ **TODO-022**: Fix CoAP `asyncio.coroutine` — **COMPLETED** *(March 19, 2026)*
 
 ### Sprint 3 — Security & Infrastructure (Next Month)
 9. ⬜ **TODO-030**: UDS password authentication frame (v1.5) *(4–8 hrs)*
-10. ⬜ **TODO-001**: Docker base image upgrade *(4–8 hrs)*
 11. ⬜ **TODO-003**: CoAP payload validation *(8–12 hrs)*
 12. ⬜ **TODO-004**: STOMP payload validation *(6–8 hrs)*
 13. ⬜ **TODO-007**: Immutable parameter protection *(6–8 hrs)*
 
 ### Medium-term (Next Quarter)
-14. ⬜ **TODO-005**: Thread shutdown *(4–6 hrs)*
-15. ⬜ **TODO-006**: Shutdown coordination *(4–6 hrs)*
-16. ⬜ **TODO-022-async**: CoAP and STOMP async modernization *(40–60 hrs)*
-17. ⬜ **TODO-014**: Container improvements *(6–8 hrs)*
+14. ⬜ **TODO-001**: Docker base image upgrade *(4–8 hrs)*
+15. ⬜ **TODO-005**: Thread shutdown *(4–6 hrs)*
+16. ⬜ **TODO-006**: Shutdown coordination *(4–6 hrs)*
+17. ⬜ **TODO-022-async**: CoAP and STOMP async modernization *(40–60 hrs)*
+18. ⬜ **TODO-014**: Container improvements *(6–8 hrs)*
 18. ⬜ **TODO-008**: Plugin architecture *(12–16 hrs)*
 19. ⬜ **TODO-013**: Python 3 type annotation modernization *(20–30 hrs)*
 20. ⬜ **TODO-015**: Test coverage expansion *(30–40 hrs)*

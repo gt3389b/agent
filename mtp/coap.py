@@ -11,10 +11,7 @@ import threading
 import queue
 import asyncio
 
-if hasattr(asyncio, 'ensure_future'):
-    asyncio_ensure_future = asyncio.ensure_future
-else:  # Deprecated since Python 3.4.4
-    asyncio_ensure_future = getattr(asyncio, "async")
+asyncio_ensure_future = asyncio.ensure_future
 
 class UspResource(resource.Resource):
     """Example resource which supports the GET and PUT methods. It sends large
@@ -114,8 +111,7 @@ class CoapSendingThread(threading.Thread):
             print("CoapTransport:  CoapSendingThread exception: "+str(e))
         my_event_loop.close()
 
-    @asyncio.coroutine
-    def _issue_request(self, to_addr, serialized_msg):
+    async def _issue_request(self, to_addr, serialized_msg):
         """Send a ProtoBuf Serialized USP Message to the specified CoAP URL via the POST Method"""
         msg = aiocoap.Message(code=aiocoap.Code.POST, payload=serialized_msg)
 
@@ -124,12 +120,12 @@ class CoapSendingThread(threading.Thread):
         msg.set_request_uri(to_addr + "?reply-to=" + self._reply_to)
 
         self._logger.debug("Creating a CoAP Client Context")
-        context = yield from aiocoap.Context.create_client_context()
+        context = await aiocoap.Context.create_client_context()
 
         self._logger.info("Sending a CoAP message to the following address: %s", to_addr)
         self._logger.debug("Payload being sent: [%s]", serialized_msg)
         try:
-            resp = yield from context.request(msg).response
+            resp = await context.request(msg).response
             self._logger.info("CoAP Message Sent and [%s] Response received", resp.code)
         except aiocoap.error.RequestTimedOut:
             self._logger.warning("CoAP Message Sent, but no Response received due to a Timeout Error")
