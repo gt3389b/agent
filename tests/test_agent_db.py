@@ -28,8 +28,16 @@ SOFTWARE.
 import time
 import datetime
 import unittest.mock as mock
+import pytest
 
 from agent import agent_db
+
+
+@pytest.fixture(autouse=True)
+def mock_db_file_exists():
+    """Patch os.path.exists in agent_db so Database() accepts mock filenames."""
+    with mock.patch("agent.agent_db.os.path.exists", return_value=True):
+        yield
 
 
 def get_db_file_contents():
