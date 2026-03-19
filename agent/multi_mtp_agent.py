@@ -141,7 +141,6 @@ class MTPConnectionManager:
                     self.agent.endpoint_id,
                     self.controller_id,
                     f"sub-periodic-{self.protocol.lower()}",
-                    self.agent._db,
                     self.agent._data_model
                 )
                 

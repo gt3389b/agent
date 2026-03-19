@@ -172,12 +172,11 @@ async def test_mtp_serialization(mtp_server):
     """Test: Message serialization works (all MTPs)"""
     from message.response import GetResponse
 
-    # Serialization is MTP-independent; test via WebSocket binding only
-    if mtp_server['name'] != 'websocket':
-        pytest.skip("Serialization tested via WebSocket only")
-
     config = mtp_server['config']
-    binding = config['binding_class']('ops::test-agent')
+    if mtp_server['name'] == 'uds':
+        binding = config['binding_class']('ops::test-agent', mtp_server['socket_path'])
+    else:
+        binding = config['binding_class']('ops::test-agent')
 
     response = GetResponse(
         msg_id='test-resp',

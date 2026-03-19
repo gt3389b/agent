@@ -285,18 +285,16 @@ async def test_concurrent_requests(mock_controller, e2e_ws_db_9080):
     agent_task.cancel()
 
 
-@pytest.mark.skip(reason="Requires 35s runtime; enable manually for periodic notification testing")
 @pytest.mark.asyncio
-async def test_periodic_notification(mock_controller, e2e_ws_db_9080):
+async def test_periodic_notification(mock_controller, e2e_ws_db_9080_fast):
     """Test: Agent sends periodic notifications"""
-    # This test requires longer runtime to see periodic
-    agent_task = asyncio.create_task(run_agent_for_seconds(35, e2e_ws_db_9080))
+    agent_task = asyncio.create_task(run_agent_for_seconds(9, e2e_ws_db_9080_fast))
     await asyncio.sleep(1)
     
     initial_count = len(mock_controller['received'])
     
-    # Wait for periodic interval (30s)
-    await asyncio.sleep(32)
+    # Wait for periodic interval (5s)
+    await asyncio.sleep(6)
     
     # Should have received at least one Periodic!
     final_count = len(mock_controller['received'])

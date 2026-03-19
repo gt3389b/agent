@@ -139,7 +139,6 @@ def test_auto_restore_on_missing_runtime_db():
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="Requires full agent + controller setup")
 async def test_device_factory_reset_command():
     """Test Device.FactoryReset() USP command end-to-end"""
     from agent.multi_mtp_agent import MultiMTPAgent
@@ -150,7 +149,7 @@ async def test_device_factory_reset_command():
     with open(TEST_RUNTIME_DB, 'r') as f:
         db = json.load(f)
     
-    db["Device.DeviceInfo.Description"] = "Modified description"
+    db["Device.DeviceInfo.FriendlyName"] = "Modified FriendlyName"
     
     with open(TEST_RUNTIME_DB, 'w') as f:
         json.dump(db, f, indent=4)
@@ -173,12 +172,13 @@ async def test_device_factory_reset_command():
     assert response.output_args.get("Status") == "Success"
     
     # Reload database and verify it was reset
+    from agent.agent_db import Database
     agent._db = Database(TEST_DM_FILE, TEST_RUNTIME_DB, "eth0")
     
     with open(TEST_DEFAULTS_DB, 'r') as f:
         defaults = json.load(f)
     
-    assert agent._db.get("Device.DeviceInfo.Description") == defaults.get("Device.DeviceInfo.Description")
+    assert agent._db.get("Device.DeviceInfo.FriendlyName") == defaults.get("Device.DeviceInfo.FriendlyName")
 
 
 if __name__ == "__main__":

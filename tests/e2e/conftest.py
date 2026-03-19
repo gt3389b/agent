@@ -9,7 +9,7 @@ import pytest
 from pathlib import Path
 
 
-def _make_ws_agent_db(tmp_path: Path, controller_port: int) -> Path:
+def _make_ws_agent_db(tmp_path: Path, controller_port: int, periodic_interval: int = 30) -> Path:
     """Build a minimal WebSocket-enabled agent DB for E2E testing."""
     db = {
         "Device.DeviceInfo.Manufacturer": "ARRIS",
@@ -33,7 +33,7 @@ def _make_ws_agent_db(tmp_path: Path, controller_port: int) -> Path:
         "Device.LocalAgent.Controller.1.Alias": "e2e-ws-ctrl",
         "Device.LocalAgent.Controller.1.EndpointID": "proto::controller-01",
         "Device.LocalAgent.Controller.1.ProvisioningCode": "",
-        "Device.LocalAgent.Controller.1.PeriodicNotifInterval": 30,
+        "Device.LocalAgent.Controller.1.PeriodicNotifInterval": periodic_interval,
         "Device.LocalAgent.Controller.1.MTPNumberOfEntries": "__NUM_ENTRIES__",
         "Device.LocalAgent.Controller.1.MTP.1.Enable": True,
         "Device.LocalAgent.Controller.1.MTP.1.Alias": "e2e-ws-mtp",
@@ -105,6 +105,12 @@ def e2e_ws_db_8080(tmp_path):
 def e2e_ws_db_9080(tmp_path):
     """Agent DB fixture with WebSocket controller on port 9080."""
     return _make_ws_agent_db(tmp_path, 9080)
+
+
+@pytest.fixture
+def e2e_ws_db_9080_fast(tmp_path):
+    """Agent DB fixture with WebSocket controller on port 9080 and 5s periodic interval."""
+    return _make_ws_agent_db(tmp_path, 9080, periodic_interval=5)
 
 
 @pytest.fixture
