@@ -1,6 +1,6 @@
 # TODO List & Action Plan
 **Project**: pyagent-old (USP Agent Implementation)  
-**Last Updated**: January 14, 2026
+**Last Updated**: March 19, 2026
 
 ---
 
@@ -57,9 +57,11 @@
 1. [Critical Security & Infrastructure](#critical-security--infrastructure)
 2. [Code TODOs from Source](#code-todos-from-source)
 3. [Technical Debt & Modernization](#technical-debt--modernization)
-4. [Testing & Quality](#testing--quality)
-5. [Documentation](#documentation)
-6. [Long-term Improvements](#long-term-improvements)
+4. [USP Protocol Compliance — Missing Message Handlers](#usp-protocol-compliance--missing-message-handlers)
+5. [USP v1.5 Upgrade Path](#usp-v15-upgrade-path)
+6. [Testing & Quality](#testing--quality)
+7. [Documentation](#documentation)
+8. [Long-term Improvements](#long-term-improvements)
 
 ---
 
@@ -1246,6 +1248,383 @@ AttributeError: module 'asyncio' has no attribute 'coroutine'. Did you mean: 'co
 
 ---
 
+## USP Protocol Compliance — Missing Message Handlers
+
+These message types are fully defined in the protobuf schema (`schema/usp-msg-1-4.proto`) but have **no Python wrapper classes, no agent handler, and no controller handling**. They are required for full TR-369 conformance and are prerequisites for v1.5 compliance (especially Register/Deregister which underpin USPServices).
+
+---
+
+### 🔴 TODO-024: Implement Add & Delete Message Handlers
+**Priority**: HIGH  
+**Location**: `message/request.py`, `message/response.py`, `agent/base_agent.py`, `agent/request_handler.py`, `agent/agent_db.py`  
+**Spec Reference**: TR-369 §7.4 (Creating, Updating, and Deleting Objects)
+
+**Current State**: The proto schema defines `Add`/`AddResp` and `Delete`/`DeleteResp` with full field sets. `MsgType.ADD`, `ADD_RESP`, `DELETE`, `DELETE_RESP` are registered as enum values. There are **no Python wrapper classes** and the request handler falls through to a generic error for both types.
+
+The controller (`controller/controller.py`) already **imports** `Add` and `Delete` from `message/` but those symbols don't exist yet — this is a latent import error.
+
+**Action Plan**:
+
+1. **Add Python wrapper classes in `message/request.py`**:
+   ```python
+   class AddRequest:
+       """Wraps USP Add request"""
+       def __init__(self, allow_partial=True, create_objs=None):
+           self.allow_partial = allow_partial
+           self.create_objs = create_objs or []  # list of {obj_path, param_settings}
+
+       def to_protobuf(self):
+           msg = usp_msg_pb2.Msg()
+           msg.header.msg_id = str(uuid.uuid4())
+           msg.header.msg_type = usp_msg_pb2.Header.ADD
+           add = msg.body.request.add
+           add.allow_partial = self.allow_partial
+           for co in self.create_objs:
+               obj = add.create_objs.add()
+               obj.obj_path = co['obj_path']
+               for k, v in co.get('param_settings', {}).items():
+                   ps = obj.param_settings.add()
+                   ps.param = k
+                   ps.value = v
+                   ps.required = co.get('required', {}).get(k, False)
+           return msg
+
+   class DeleteRequest:
+       """Wraps USP Delete request"""
+       def __init__(self, allow_partial=True, obj_paths=None):
+           self.allow_partial = allow_partial
+           self.obj_paths = obj_paths or []
+
+       def to_protobuf(self):
+           msg = usp_msg_pb2.Msg()
+           msg.header.msg_id = str(uuid.uuid4())
+           msg.header.msg_type = usp_msg_pb2.Header.DELETE
+           delete = msg.body.request.delete
+           delete.allow_partial = self.allow_partial
+           delete.obj_paths.extend(self.obj_paths)
+           return msg
+   ```
+
+2. **Add response wrapper classes in `message/response.py`**:
+   - `AddResponse`: wraps `AddResp`, exposes `created_obj_results`
+   - `DeleteResponse`: wraps `DeleteResp`, exposes `deleted_obj_results`
+
+3. **Update `message/__init__.py`** to export `AddRequest`, `DeleteRequest`, `AddResponse`, `DeleteResponse` and add to `REQUEST_TYPES` dispatch dict.
+
+4. **Implement `on_add_request()` in `agent/base_agent.py`**:
+   - Validate `obj_path` exists in the data model and is multi-instance
+   - Call `agent_db.Database.insert()` for each `create_obj`
+   - Handle `allow_partial`: on first failure, either continue (True) or roll back all (False)
+   - Return `AddResp` with `instantiated_path` and `unique_keys` per created object
+   - USP error 7011 (`Object not creatable`) if path disallows creation
+
+5. **Implement `on_delete_request()` in `agent/base_agent.py`**:
+   - Validate each `obj_path` exists (search paths allowed per v1.3+)
+   - Call `agent_db.Database.delete()` for each resolved instance
+   - Handle `allow_partial`
+   - Return `DeleteResp` with `affected_paths` and `unaffected_path_errs`
+   - USP error 7012 (`Object not deletable`) if path disallows deletion
+
+6. **Update `agent/request_handler.py`** `REQUEST_TYPES` dict to include `ADD` → `on_add_request` and `DELETE` → `on_delete_request`.
+
+7. **Extend `agent/agent_db.py`**:
+   - `insert(path, params)` → assigns next instance number, writes to runtime DB, returns instantiated path
+   - `delete(path)` → removes instance and all sub-keys from runtime DB
+
+8. **Write tests**:
+   - `tests/test_add_delete.py`: happy path, `allow_partial=False` rollback, non-creatable path, non-existent path, unique key conflicts
+
+**Estimated Effort**: 12–16 hours  
+**Dependencies**: None  
+**Risk**: Medium — `agent_db` insert/delete needs careful instance-numbering logic
+
+---
+
+### 🔴 TODO-025: Implement Notify (Inbound) & NotifyResp Handlers
+**Priority**: HIGH  
+**Location**: `message/request.py`, `message/response.py`, `agent/base_agent.py`, `agent/request_handler.py`  
+**Spec Reference**: TR-369 §7.6 (Notifications and Subscription Mechanism)
+
+**Current State**: The agent **sends** notifications outbound (see `agent/notify.py`). But when a **controller sends a Notify** to the agent (e.g., relaying an event through a broker), or when the agent acts in a dual-role scenario, there is no inbound handler. `MsgType.NOTIFY` falls through to an error. `NotifyResp` is also unhandled.
+
+**Action Plan**:
+
+1. **Add `NotifyRequest` wrapper in `message/request.py`**:
+   - Expose `subscription_id`, `send_resp`, and the `oneof notification` variant (Event, ValueChange, ObjectCreation, ObjectDeletion, OperationComplete, OnBoardRequest)
+   - Add `from_protobuf()` class method
+
+2. **Add `NotifyResponse` wrapper in `message/response.py`**:
+   - Wraps `NotifyResp`: just echoes `subscription_id`
+
+3. **Implement `on_notify_request()` in `agent/base_agent.py`**:
+   - Log the notification type and payload
+   - If `send_resp=True`, return a `NotifyResp` echoing `subscription_id`
+   - Default implementation is a no-op log (agent as proxy/broker scenario)
+
+4. **Update `REQUEST_TYPES`** dispatch in `agent/request_handler.py`.
+
+5. **Handle `NotifyResp` on the controller side** (`controller/response_handler.py`): currently ignored; add a branch that marks the pending subscription ACK complete.
+
+6. **Write tests**:
+   - `tests/test_notify_inbound.py`: verify agent responds to incoming Notify with NotifyResp when `send_resp=True`; verify no response when `send_resp=False`
+
+**Estimated Effort**: 6–8 hours  
+**Dependencies**: None  
+**Risk**: Low
+
+---
+
+### 🟡 TODO-026: Implement GetSupportedProtocol Handler
+**Priority**: MEDIUM  
+**Location**: `message/request.py`, `message/response.py`, `agent/base_agent.py`  
+**Spec Reference**: TR-369 §7.5.5
+
+**Current State**: `MsgType.GET_SUPPORTED_PROTO` / `GET_SUPPORTED_PROTO_RESP` are defined in the schema. No Python wrappers. Falls through to error in the request handler.
+
+**Action Plan**:
+
+1. **Add `GetSupportedProtocolRequest` wrapper** in `message/request.py`:
+   - Single field: `controller_supported_protocol_versions` (comma-separated string, e.g. `"1.0,1.1,1.2,1.3,1.4,1.5"`)
+
+2. **Add `GetSupportedProtocolResponse` wrapper** in `message/response.py`:
+   - Single field: `agent_supported_protocol_versions`
+
+3. **Implement `on_get_supported_protocol_request()` in `agent/base_agent.py`**:
+   ```python
+   async def on_get_supported_protocol_request(self, request):
+       resp = GetSupportedProtocolResponse()
+       resp.agent_supported_protocol_versions = "1.0,1.1,1.2,1.3,1.4,1.5"
+       return resp
+   ```
+   - Version string should be read from config / a constant; bump when upgrading.
+
+4. **Update dispatch** in `agent/request_handler.py`.
+
+**Estimated Effort**: 2–4 hours  
+**Dependencies**: TODO-028 (version string should reflect actual supported version)  
+**Risk**: Very Low
+
+---
+
+### 🔴 TODO-027: Implement Register & Deregister Handlers
+**Priority**: HIGH  
+**Location**: `message/request.py`, `message/response.py`, `agent/base_agent.py`, `agent/request_handler.py`, `database/`  
+**Spec Reference**: TR-369 §7 (Register/Deregister), Appendix VI (USP Services)
+
+**Current State**: `MsgType.REGISTER` and `DEREGISTER` are in the schema (added in v1.3). The proto includes `Register` / `RegisterResp` / `Deregister` / `DeregisterResp` messages. Currently falls through to error. v1.5 adds `USPServices.Trust` data model for access control on registrations.
+
+**Action Plan**:
+
+1. **Add Python wrapper classes** in `message/request.py`:
+   - `RegisterRequest`: wraps `Register` — `allow_partial` + list of `RegistrationPath` (path strings)
+   - `DeregisterRequest`: wraps `Deregister` — list of path strings
+
+2. **Add response wrapper classes** in `message/response.py`:
+   - `RegisterResponse`: exposes `registered_path_results` (success/failure per path)
+   - `DeregisterResponse`: exposes `deregistered_path_results`
+
+3. **Implement `on_register_request()` in `agent/base_agent.py`**:
+   - Validate each path is a valid data model path (not already registered by another USP Service)
+   - Store registered paths in a runtime table (e.g., `database/runtime/usp-services.json`)
+   - Check `USPServices.Trust` table for access control (v1.5 requirement — see TODO-031)
+   - Return `RegisterResp` with per-path success/failure (USP error 7800–7804 for registration errors)
+
+4. **Implement `on_deregister_request()` in `agent/base_agent.py`**:
+   - Remove paths from the runtime registration table
+   - Return `DeregisterResp`
+
+5. **Add `USPServices.Trust` data model stub** to `database/` (v1.5 requirement):
+   ```json
+   {
+     "Device.USPServices.USPService.{i}.": {},
+     "Device.USPServices.Trust.{i}.": {}
+   }
+   ```
+
+6. **Update dispatch** in `agent/request_handler.py`.
+
+7. **Write tests**:
+   - `tests/test_register_deregister.py`: happy path, duplicate path conflict, deregister non-existent path, access control denial
+
+**Estimated Effort**: 12–16 hours  
+**Dependencies**: TODO-024 (agent_db patterns), TODO-028 (v1.5 version context)  
+**Risk**: Medium — registration state touches authorization model
+
+---
+
+## USP v1.5 Upgrade Path
+
+USP v1.5 (TR-369 Amendment 5) was published January 2026. The codebase was just upgraded to v1.4.2; v1.5 is a focused amendment with one proto-level schema change and several behavioral requirements. See the full analysis from the upgrade evaluation session.
+
+---
+
+### 🔴 TODO-028: Upgrade Proto Schema to v1.5 + Fix Version Strings
+**Priority**: CRITICAL  
+**Location**: `schema/`, `message/usp_record_pb2.py`, `message/usp_msg_pb2.py`, 9 source files  
+**Spec Reference**: TR-369a5 (January 2026)
+
+**Schema change** — `usp-record-1-5.proto` adds two new fields to `Record`:
+```proto
+// New in v1.5:
+string originator_id = 14;   // R-MTP.4c/4d: original sender in forwarded messages
+string destination_id = 15;  // R-MTP.4e: target endpoint for Notify messages
+```
+`usp-msg-1-5.proto` is **identical** to v1.4 — no message body changes. Both new fields are optional in proto3 (default empty string), so the change is fully backward-compatible.
+
+**Action Plan**:
+
+1. **Download updated proto files**:
+   ```bash
+   # From BroadbandForum/usp GitHub, tag v1.5 (or master)
+   curl -o schema/usp-msg-1-5.proto \
+     https://raw.githubusercontent.com/BroadbandForum/usp/master/specification/usp-msg-1-5.proto
+   curl -o schema/usp-record-1-5.proto \
+     https://raw.githubusercontent.com/BroadbandForum/usp/master/specification/usp-record-1-5.proto
+   ```
+
+2. **Regenerate protobuf Python files**:
+   ```bash
+   python -m grpc_tools.protoc -I schema/ \
+     --python_out=message/ schema/usp-msg-1-5.proto schema/usp-record-1-5.proto
+   # Rename output to usp_msg_pb2.py / usp_record_pb2.py
+   # OR keep both versions and alias the v1.5 names
+   ```
+
+3. **Fix `record.version` in all 9 files** (currently `"1.0"` or `"1.4"`):
+
+   | File | Fix |
+   |---|---|
+   | `mtp/usp_binding.py` | `"1.4"` → `"1.5"` |
+   | `agent/request_handler.py` | `"1.0"` → `"1.5"` |
+   | `agent/notify.py` | `"1.0"` → `"1.5"` |
+   | `controller/controller.py` | `"1.0"` → `"1.5"` |
+   | `controller/response_handler.py` | `"1.0"` → `"1.5"` |
+   | `message/message.py` | `"1.0"` → `"1.5"` |
+   | `message/__init__.py` | `"1.0"` → `"1.5"` |
+   | `agent/uds_agent_old.py` | `"1.0"` → `"1.5"` |
+   | `test_websocket_usp.py` | `"1.3"` → `"1.5"` |
+   | `test_reboot.py` | `"1.0"` → `"1.5"` |
+
+   Ideally centralise this in a single constant:
+   ```python
+   # message/version.py
+   USP_VERSION = "1.5"
+   ```
+   Then all Record construction imports and uses `USP_VERSION`.
+
+4. **Update `GetSupportedProtocol` version string** (TODO-026) to advertise `"1.5"`.
+
+5. **Run full test suite** — proto3 backward compatibility means existing tests should pass.
+
+**Estimated Effort**: 2–3 hours  
+**Dependencies**: None — proto3 backward compatible  
+**Risk**: Low
+
+---
+
+### 🔴 TODO-029: Implement originator_id / destination_id on Record
+**Priority**: HIGH  
+**Location**: `agent/notify.py`, `mtp/usp_binding.py`, `agent/bridge_agent.py`, `uspbridge/`  
+**Spec Reference**: TR-369a5 R-MTP.4c, R-MTP.4d, R-MTP.4e
+
+**What the spec requires**:
+- **R-MTP.4c/4d** (`originator_id`): When a broker, proxy, or trusted broker **forwards** a USP Record, it MUST copy the original `from_id` into `originator_id` before replacing `from_id` with its own endpoint ID. For direct agent↔controller links (no proxy), the field is optional/empty.
+- **R-MTP.4e** (`destination_id`): On **Notify** messages directed at a specific controller (subscription-based — not broadcast), the sender MUST populate `destination_id` with the target controller's endpoint ID.
+
+**Action Plan**:
+
+1. **`destination_id` on outbound Notify records** (`agent/notify.py`):
+   - `BootNotification`, `ValueChangeNotification`, `PeriodicNotification` all construct a `Record` directly
+   - Each already knows the target controller's endpoint ID (from the subscription or controller config)
+   - Add: `record.destination_id = controller_endpoint_id` before sending
+   - `mtp/usp_binding.py` `serialize_message()` should accept an optional `destination_id` kwarg
+
+2. **`originator_id` in bridge/proxy forwarding** (`agent/bridge_agent.py`, `uspbridge/`):
+   - When forwarding, before overwriting `record.from_id`, save it to `record.originator_id`
+   - Audit `uspbridge/` for all forwarding code paths
+
+3. **Receiver-side validation** (`mtp/usp_binding.py` `deserialize_bytes()`):
+   - Log `originator_id` if present (for debugging proxy chains)
+   - Do not reject records with empty `originator_id` (optional field)
+
+4. **Write tests**:
+   - `tests/test_v15_record_fields.py`: verify `destination_id` is set on notify records; verify `originator_id` is preserved through bridge forwarding
+
+**Estimated Effort**: 4–6 hours  
+**Dependencies**: TODO-028 (need v1.5 proto with new fields regenerated first)  
+**Risk**: Low for direct peers; Medium for bridge paths (need to audit all forwarding)
+
+---
+
+### 🟡 TODO-030: UDS Password Authentication Frame (v1.5)
+**Priority**: MEDIUM  
+**Location**: `mtp/uds.py`, `mtp/uds_binding.py`, `cfg/agent.json`  
+**Spec Reference**: TR-369a5 §4.6 (UDS MTP — new auth frame type)
+
+**What changed**: v1.5 defines a new UDS **handshake frame variant** that carries a password for mutual authentication. The current implementation (`mtp/uds.py`) only supports the v1.4 4-byte length-prefix framing. Agents that don't configure a password can still operate (password is optional), but the framing parser must not reject the new frame type.
+
+**Action Plan**:
+
+1. **Extend `UdsTransport` framing in `mtp/uds.py`**:
+   - During the UDS handshake, detect whether the peer sends the v1.4 connect record or the v1.5 auth frame
+   - If the auth frame is received, extract the password field and validate against configured value
+   - If no password is configured, accept any (or no) password
+
+2. **Add password support to `mtp/uds_binding.py`**:
+   ```python
+   class UdsUspBinding(UspBinding):
+       def __init__(self, endpoint_id, socket_path, mode='listen',
+                    *, framing='length-prefix', password=None):
+           ...
+           self._password = password
+   ```
+
+3. **Add UDS password to agent config**:
+   ```json
+   // cfg/agent.json  (new optional field)
+   {
+     "uds.password": null
+   }
+   ```
+
+4. **Write tests**: verify handshake with and without password, verify wrong password is rejected.
+
+**Estimated Effort**: 4–8 hours  
+**Dependencies**: TODO-028  
+**Risk**: Low (backward compatible; password is optional)
+
+---
+
+### 🟡 TODO-031: SET allow_partial + Search Path Behavior (v1.5)
+**Priority**: MEDIUM  
+**Location**: `agent/request_handler.py`, `agent/base_agent.py`  
+**Spec Reference**: TR-369a5 R-SET.2a
+
+**What changed**: v1.5 explicitly clarifies that when a SET targets a **Search Path** (e.g., `Device.WiFi.Radio.[Enable==true].Channel`), `allow_partial` governs failure handling **per matched instance**, not per the whole request:
+- `allow_partial=true`: update all instances that succeed; return `OperationFailure` only for those that fail
+- `allow_partial=false`: if **any** instance fails, the entire search path update fails (but other unrelated `update_objs` in the same Set message still follow their own `allow_partial` logic)
+
+**Action Plan**:
+
+1. **Audit `on_set_request()` in `agent/base_agent.py`** and the legacy `agent/request_handler.py`:
+   - Confirm Search Path resolution currently works (`agent_db.find_params()` regex matching)
+   - Check whether `allow_partial` is honored when the resolved path is a Search Path (wildcard or expression)
+
+2. **Fix set handler** if it doesn't correctly distinguish between:
+   - A direct path (one instance): any failure is a simple per-param error
+   - A Search Path (multiple instances): failures per instance, governed by `allow_partial`
+
+3. **Write tests** in `tests/test_set_search_path.py`:
+   - `test_set_search_path_allow_partial_true()`: some instances fail, others succeed
+   - `test_set_search_path_allow_partial_false()`: one failure causes all to fail
+   - `test_set_direct_path_unaffected()`: direct path still works as before
+
+**Estimated Effort**: 3–6 hours  
+**Dependencies**: TODO-028  
+**Risk**: Low
+
+---
+
 ## Testing & Quality
 
 ### 🟡 TODO-015: Expand Test Coverage
@@ -1633,50 +2012,63 @@ AttributeError: module 'asyncio' has no attribute 'coroutine'. Did you mean: 'co
 
 ## Summary & Priorities
 
-### Immediate (Next 2 Weeks)
-1. ⬜ TODO-001: Docker base image upgrade
-2. ⬜ TODO-022: Fix CoAP asyncio.coroutine (Python 3.11+ compatibility)
-3. ⬜ TODO-003: CoAP payload validation
-4. ⬜ TODO-004: STOMP payload validation
-5. ✅ TODO-002: Dependency updates - **COMPLETED**
-6. ✅ TODO-021: UDS MTP implementation - **COMPLETED**
+### Sprint 1 — USP Protocol Foundation (Now)
+1. ⬜ **TODO-028**: Upgrade proto schema to v1.5 + fix all version strings *(2–3 hrs)*
+2. ⬜ **TODO-024**: Implement Add & Delete message handlers *(12–16 hrs)*
+3. ⬜ **TODO-025**: Implement Notify (inbound) & NotifyResp handlers *(6–8 hrs)*
+4. ⬜ **TODO-026**: Implement GetSupportedProtocol handler *(2–4 hrs)*
 
-### Short-term (Next Month)
-7. ⬜ TODO-007: Immutable parameter protection
-8. ⬜ TODO-005: Thread shutdown
-9. ⬜ TODO-006: Shutdown coordination
-10. ⬜ TODO-014: Container improvements
-11. ⬜ TODO-022: CoAP and STOMP async modernization
+### Sprint 2 — USP v1.5 Behavioral + Register/Deregister (Next 2 Weeks)
+5. ⬜ **TODO-029**: Implement originator_id / destination_id on Record *(4–6 hrs)*
+6. ⬜ **TODO-027**: Implement Register & Deregister handlers + USPServices.Trust stub *(12–16 hrs)*
+7. ⬜ **TODO-031**: SET allow_partial + Search Path behavior fix *(3–6 hrs)*
+8. ⬜ **TODO-022**: Fix CoAP asyncio.coroutine (Python 3.11+ compatibility) *(2–4 hrs)*
+
+### Sprint 3 — Security & Infrastructure (Next Month)
+9. ⬜ **TODO-030**: UDS password authentication frame (v1.5) *(4–8 hrs)*
+10. ⬜ **TODO-001**: Docker base image upgrade *(4–8 hrs)*
+11. ⬜ **TODO-003**: CoAP payload validation *(8–12 hrs)*
+12. ⬜ **TODO-004**: STOMP payload validation *(6–8 hrs)*
+13. ⬜ **TODO-007**: Immutable parameter protection *(6–8 hrs)*
 
 ### Medium-term (Next Quarter)
-11. ⬜ TODO-008: Plugin architecture
-12. ⬜ TODO-013: Python 3 migration
-13. ⬜ TODO-015: Test coverage expansion
-14. ⬜ TODO-017: API documentation
+14. ⬜ **TODO-005**: Thread shutdown *(4–6 hrs)*
+15. ⬜ **TODO-006**: Shutdown coordination *(4–6 hrs)*
+16. ⬜ **TODO-022-async**: CoAP and STOMP async modernization *(40–60 hrs)*
+17. ⬜ **TODO-014**: Container improvements *(6–8 hrs)*
+18. ⬜ **TODO-008**: Plugin architecture *(12–16 hrs)*
+19. ⬜ **TODO-013**: Python 3 type annotation modernization *(20–30 hrs)*
+20. ⬜ **TODO-015**: Test coverage expansion *(30–40 hrs)*
+21. ⬜ **TODO-017**: API documentation *(16–20 hrs)*
 
 ### Long-term (6+ Months)
-15. ✅ TODO-019: USP spec update - **COMPLETED (TR-369 v1.4.2)**
-16. ⬜ TODO-023: Performance optimization
+22. ✅ **TODO-019**: USP spec update — **COMPLETED (TR-369 v1.4.2)**
+23. ⬜ **TODO-023**: Performance optimization *(40–60 hrs)*
 
 ### Low Priority (As Needed)
-17. ⬜ TODO-009: File cleanup
-18. ⬜ TODO-010: Better ID handling
-19. ⬜ TODO-011: Notification list
-20. ⬜ TODO-012: Message binding
-21. ⬜ TODO-016: Linting/formatting
-22. ⬜ TODO-018: Architecture docs
+24. ⬜ **TODO-009**: File cleanup *(3–4 hrs)*
+25. ⬜ **TODO-010**: Better ID handling *(4–6 hrs)*
+26. ⬜ **TODO-011**: Notification list *(4–6 hrs)*
+27. ⬜ **TODO-012**: Message binding *(2–4 hrs)*
+28. ⬜ **TODO-016**: Linting/formatting *(4–6 hrs)*
+29. ⬜ **TODO-018**: Architecture docs *(12–16 hrs)*
 
 ---
 
 ## Estimated Total Effort
-- **Critical**: 30-44 hours (Docker + CoAP fix)
-- **High**: 14-20 hours
-- **High**: 14-20 hours  
-- **Medium**: 76-104 hours
-- **Low**: 45-62 hours
-- **Long-term**: 120-180 hours
 
-**Total**: 283-406 hours (~3-5 months of full-time work)
+| Category | Items | Estimate |
+|---|---|---|
+| **USP v1.5 upgrade** (TODO-028–031) | 4 items | 13–23 hours |
+| **Missing message handlers** (TODO-024–027) | 4 items | 32–44 hours |
+| **Security & Infrastructure** (TODO-001, 003, 004, 007) | 4 items | 24–36 hours |
+| **Code quality / async** (TODO-005, 006, 013, 022) | 4 items | 70–100 hours |
+| **Testing** (TODO-015) | 1 item | 30–40 hours |
+| **Low priority** (TODO-008–012, 014, 016–018, 023) | 9 items | 117–174 hours |
+
+**Total open work**: ~286–417 hours
+
+**Sprint 1+2 focus** (USP v1.5 + missing handlers): **~45–67 hours** of targeted protocol work to achieve full TR-369 v1.5 conformance.
 
 ---
 

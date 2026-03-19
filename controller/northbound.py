@@ -106,6 +106,12 @@ class ControllerNorthbound:
                 result = await self._cmd_operate(params)
             elif method == 'get_supported_dm':
                 result = await self._cmd_get_supported_dm(params)
+            elif method == 'get_instances':
+                result = await self._cmd_get_instances(params)
+            elif method == 'add':
+                result = await self._cmd_add(params)
+            elif method == 'delete':
+                result = await self._cmd_delete(params)
             elif method == 'list_agents':
                 result = await self._cmd_list_agents(params)
             else:
@@ -240,6 +246,97 @@ class ControllerNorthbound:
         )
         return result
     
+    async def _cmd_get_instances(self, params):
+        """
+        Execute GetInstances command
+
+        Args:
+            params: {
+                "agent_id": "self::uds-agent-001",
+                "obj_paths": ["Device.WiFi.SSID.", ...],
+                "first_level_only": false  # optional
+            }
+
+        Returns:
+            dict: {obj_path: [{"path": ..., "unique_keys": {...}}, ...]}
+        """
+        agent_id = params.get('agent_id')
+        obj_paths = params.get('obj_paths', [])
+        first_level_only = params.get('first_level_only', False)
+
+        if not agent_id:
+            raise ValueError("agent_id required")
+        if not obj_paths:
+            raise ValueError("obj_paths required")
+
+        logger.info(f"Northbound GetInstances: {agent_id} -> {obj_paths}")
+
+        return await self.controller.send_get_instances_request(
+            agent_id, obj_paths, first_level_only
+        )
+
+    async def _cmd_add(self, params):
+        """
+        Execute Add command — create multi-instance object instances
+
+        Args:
+            params: {
+                "agent_id": "self::uds-agent-001",
+                "create_objs": [
+                    {
+                        "obj_path": "Device.WiFi.SSID.",
+                        "param_settings": [
+                            {"param": "SSID", "value": "MyNet", "required": false},
+                            ...
+                        ]
+                    }
+                ],
+                "allow_partial": true  # optional
+            }
+
+        Returns:
+            list of {requested_path, instantiated_path, unique_keys} or {requested_path, error}
+        """
+        agent_id = params.get('agent_id')
+        create_objs = params.get('create_objs', [])
+        allow_partial = params.get('allow_partial', True)
+
+        if not agent_id:
+            raise ValueError("agent_id required")
+        if not create_objs:
+            raise ValueError("create_objs required")
+
+        logger.info(f"Northbound Add: {agent_id} -> {[o.get('obj_path') for o in create_objs]}")
+
+        return await self.controller.send_add_request(agent_id, create_objs, allow_partial)
+
+    async def _cmd_delete(self, params):
+        """
+        Execute Delete command — remove multi-instance object instances
+
+        Args:
+            params: {
+                "agent_id": "self::uds-agent-001",
+                "obj_paths": ["Device.WiFi.SSID.2.", ...],
+                "allow_partial": true  # optional
+            }
+
+        Returns:
+            list of {requested_path, affected_paths} or {requested_path, error}
+        """
+        agent_id = params.get('agent_id')
+        obj_paths = params.get('obj_paths', [])
+        allow_partial = params.get('allow_partial', True)
+
+        if not agent_id:
+            raise ValueError("agent_id required")
+        if not obj_paths:
+            raise ValueError("obj_paths required")
+
+        logger.info(f"Northbound Delete: {agent_id} -> {obj_paths}")
+
+        return await self.controller.send_delete_request(agent_id, obj_paths, allow_partial)
+
     async def _cmd_list_agents(self, params):
         """
         List connected agents

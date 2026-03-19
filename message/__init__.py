@@ -109,6 +109,53 @@ class GetInstances(Message):
         super().generate_record()
 
 
+class Add(Message):
+    """Add request message — create one or more multi-instance object instances."""
+
+    def __init__(self, to_id, from_id, create_objs, allow_partial=True):
+        """
+        Args:
+            create_objs: list of {"obj_path": str,
+                                  "param_settings": [{"param": str, "value": str, "required": bool}]}
+            allow_partial: if True the agent applies successful creates even when others fail
+        """
+        super().__init__(to_id=to_id, from_id=from_id)
+        self.serialize(create_objs, allow_partial)
+
+    def serialize(self, create_objs, allow_partial):
+        self._msg.header.msg_type = usp_msg.Header.ADD
+        self._msg.body.request.add.allow_partial = allow_partial
+        for co in create_objs:
+            create_obj = self._msg.body.request.add.create_objs.add()
+            create_obj.obj_path = co['obj_path']
+            for ps in co.get('param_settings', []):
+                setting = create_obj.param_settings.add()
+                setting.param = ps['param']
+                setting.value = ps['value']
+                setting.required = ps.get('required', False)
+        super().generate_record()
+
+
+class Delete(Message):
+    """Delete request message — remove one or more multi-instance object instances."""
+
+    def __init__(self, to_id, from_id, obj_paths, allow_partial=True):
+        """
+        Args:
+            obj_paths: list of fully-qualified instance paths, e.g.
+                       ["Device.WiFi.SSID.2.", "Device.NAT.PortMapping.3."]
+            allow_partial: if True the agent deletes successful paths even when others fail
+        """
+        super().__init__(to_id=to_id, from_id=from_id)
+        self.serialize(obj_paths, allow_partial)
+
+    def serialize(self, obj_paths, allow_partial):
+        self._msg.header.msg_type = usp_msg.Header.DELETE
+        self._msg.body.request.delete.allow_partial = allow_partial
+        self._msg.body.request.delete.obj_paths.extend(obj_paths)
+        super().generate_record()
+
+
 class ProtocolViolationError(Exception):
     """A USP Protocol Violation Error"""
     pass

@@ -44,7 +44,7 @@ from mtp.uds import UdsTransport
 from mtp.coap_binding import CoapUspBinding
 from message import usp_record_pb2
 from message import usp_msg_pb2
-from message import Set, Get, GetSupportedDM, GetInstances
+from message import Set, Get, GetSupportedDM, GetInstances, Add, Delete
 
 logger = logging.getLogger(__name__)
 
@@ -1365,6 +1365,179 @@ class Controller:
         
         return results
     
+    async def send_get_instances_request(self, agent_id, obj_paths, first_level_only=False):
+        """
+        Send GetInstances request to agent.
+
+        Args:
+            agent_id: Agent endpoint ID
+            obj_paths: List of multi-instance object paths, e.g. ["Device.WiFi.SSID."]
+            first_level_only: Only return immediate children
+
+        Returns:
+            dict: {requested_path: [instantiated_obj_path, ...], ...}
+                  Each value is a list of concrete instance paths with their unique keys:
+                  {"Device.WiFi.SSID.": [{"path": "Device.WiFi.SSID.1.", "unique_keys": {...}}, ...]}
+        """
+        if agent_id not in self._connected_agents:
+            raise ValueError(f"Agent not connected: {agent_id}")
+
+        gi_msg = GetInstances(
+            to_id=agent_id,
+            from_id=self._endpoint_id,
+            obj_paths=list(obj_paths),
+            first_level_only=first_level_only,
+        )
+
+        resp_record, resp_msg = await self._send_request(gi_msg, agent_id, 'GetInstances')
+        if resp_msg and resp_msg.body.WhichOneof('msg_body') == 'error':
+            err = resp_msg.body.error
+            raise RuntimeError(f"USP Error {err.err_code}: {err.err_msg}")
+        if not resp_msg or not resp_msg.body.response.HasField('get_instances_resp'):
+            return {}
+
+        return self._parse_get_instances_response(resp_msg)
+
+    def _parse_get_instances_response(self, msg):
+        """Parse GetInstancesResp into {requested_path: [instance_info, ...]}."""
+        out = {}
+        gi_resp = msg.body.response.get_instances_resp
+        for req_result in gi_resp.req_path_results:
+            path = req_result.requested_path
+            if req_result.err_code != 0:
+                out[path] = {"error": f"Error {req_result.err_code}: {req_result.err_msg}"}
+                continue
+            instances = []
+            for inst in req_result.curr_insts:
+                instances.append({
+                    "path": inst.instantiated_obj_path,
+                    "unique_keys": dict(inst.unique_keys),
+                })
+            out[path] = instances
+        return out
+
+    async def send_add_request(self, agent_id, create_objs, allow_partial=True):
+        """
+        Send Add request to agent — create multi-instance object instances.
+
+        Args:
+            agent_id: Agent endpoint ID
+            create_objs: list of {
+                "obj_path": "Device.WiFi.SSID.",
+                "param_settings": [{"param": "SSID", "value": "MyNet", "required": false}, ...]
+            }
+            allow_partial: apply successful creates even when some fail
+
+        Returns:
+            list of {
+                "requested_path": str,
+                "instantiated_path": str,      # on success
+                "unique_keys": {str: str},      # on success
+                "param_errors": [...],           # on success with partial param failures
+                "error": str,                    # on failure
+            }
+        """
+        if agent_id not in self._connected_agents:
+            raise ValueError(f"Agent not connected: {agent_id}")
+
+        add_msg = Add(
+            to_id=agent_id,
+            from_id=self._endpoint_id,
+            create_objs=list(create_objs),
+            allow_partial=allow_partial,
+        )
+
+        resp_record, resp_msg = await self._send_request(add_msg, agent_id, 'Add')
+        if resp_msg and resp_msg.body.WhichOneof('msg_body') == 'error':
+            err = resp_msg.body.error
+            raise RuntimeError(f"USP Error {err.err_code}: {err.err_msg}")
+        if not resp_msg or not resp_msg.body.response.HasField('add_resp'):
+            return []
+
+        return self._parse_add_response(resp_msg)
+
+    def _parse_add_response(self, msg):
+        """Parse AddResp into a list of per-object result dicts."""
+        out = []
+        add_resp = msg.body.response.add_resp
+        for result in add_resp.created_obj_results:
+            item = {"requested_path": result.requested_path}
+            status = result.oper_status
+            if status.HasField('oper_success'):
+                s = status.oper_success
+                item["instantiated_path"] = s.instantiated_path
+                item["unique_keys"] = dict(s.unique_keys)
+                if s.param_errs:
+                    item["param_errors"] = [
+                        {"param": e.param, "err_code": e.err_code, "err_msg": e.err_msg}
+                        for e in s.param_errs
+                    ]
+            elif status.HasField('oper_failure'):
+                f = status.oper_failure
+                item["error"] = f"Error {f.err_code}: {f.err_msg}"
+            out.append(item)
+        return out
+
+    async def send_delete_request(self, agent_id, obj_paths, allow_partial=True):
+        """
+        Send Delete request to agent — remove multi-instance object instances.
+
+        Args:
+            agent_id: Agent endpoint ID
+            obj_paths: list of instance paths to delete,
+                       e.g. ["Device.WiFi.SSID.2.", "Device.NAT.PortMapping.3."]
+            allow_partial: delete successful paths even when some fail
+
+        Returns:
+            list of {
+                "requested_path": str,
+                "affected_paths": [str, ...],   # on success
+                "unaffected_errors": [...],       # on success with some paths untouched
+                "error": str,                     # on failure
+            }
+        """
+        if agent_id not in self._connected_agents:
+            raise ValueError(f"Agent not connected: {agent_id}")
+
+        del_msg = Delete(
+            to_id=agent_id,
+            from_id=self._endpoint_id,
+            obj_paths=list(obj_paths),
+            allow_partial=allow_partial,
+        )
+
+        resp_record, resp_msg = await self._send_request(del_msg, agent_id, 'Delete')
+        if resp_msg and resp_msg.body.WhichOneof('msg_body') == 'error':
+            err = resp_msg.body.error
+            raise RuntimeError(f"USP Error {err.err_code}: {err.err_msg}")
+        if not resp_msg or not resp_msg.body.response.HasField('delete_resp'):
+            return []
+
+        return self._parse_delete_response(resp_msg)
+
+    def _parse_delete_response(self, msg):
+        """Parse DeleteResp into a list of per-object result dicts."""
+        out = []
+        del_resp = msg.body.response.delete_resp
+        for result in del_resp.deleted_obj_results:
+            item = {"requested_path": result.requested_path}
+            status = result.oper_status
+            if status.HasField('oper_success'):
+                s = status.oper_success
+                item["affected_paths"] = list(s.affected_paths)
+                if s.unaffected_path_errs:
+                    item["unaffected_errors"] = [
+                        {"path": e.unaffected_path,
+                         "err_code": e.err_code,
+                         "err_msg": e.err_msg}
+                        for e in s.unaffected_path_errs
+                    ]
+            elif status.HasField('oper_failure'):
+                f = status.oper_failure
+                item["error"] = f"Error {f.err_code}: {f.err_msg}"
+            out.append(item)
+        return out
+
     async def send_get_supported_dm_request(self, agent_id, obj_paths, first_level_only=False, 
                                            return_commands=True, return_events=True, return_params=True):
         """

@@ -1,5 +1,6 @@
 asyncio
 aiocoap>=0.4.7
+fastmcp>=2.0
 bottle>=0.12.25
 coverage>=7.0.0
 netifaces>=0.11.0
