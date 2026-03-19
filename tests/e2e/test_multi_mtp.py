@@ -15,8 +15,6 @@ import websockets
 from message import usp_msg_pb2, usp_record_pb2
 from agent.multi_mtp_agent import MultiMTPAgent
 
-# Skip these tests - they require test database configured for multiple controllers
-pytestmark = pytest.mark.skip(reason="Requires test database with multiple controllers on test ports")
 
 
 @pytest_asyncio.fixture
@@ -95,12 +93,9 @@ def create_echo_response(request_record):
 
 
 @pytest.mark.asyncio
-async def test_agent_connects_to_multiple_controllers(dual_controller_setup):
+async def test_agent_connects_to_multiple_controllers(dual_controller_setup, e2e_dual_ws_db):
     """Test: Agent connects to multiple controllers simultaneously"""
-    # Modify test-db.json to have 2 controllers on different ports
-    # For now, test with default config
-    
-    agent_task = asyncio.create_task(run_agent_for_seconds(3))
+    agent_task = asyncio.create_task(run_agent_for_seconds(3, e2e_dual_ws_db))
     await asyncio.sleep(2)
     
     # Check both controllers received Boot!
@@ -116,9 +111,9 @@ async def test_agent_connects_to_multiple_controllers(dual_controller_setup):
 
 
 @pytest.mark.asyncio
-async def test_request_routing_to_correct_mtp(dual_controller_setup):
+async def test_request_routing_to_correct_mtp(dual_controller_setup, e2e_dual_ws_db):
     """Test: Responses route back on correct MTP connection"""
-    agent_task = asyncio.create_task(run_agent_for_seconds(5))
+    agent_task = asyncio.create_task(run_agent_for_seconds(5, e2e_dual_ws_db))
     await asyncio.sleep(1)
     
     ctrl1 = dual_controller_setup['ctrl1']
@@ -139,9 +134,9 @@ async def test_request_routing_to_correct_mtp(dual_controller_setup):
 
 
 @pytest.mark.asyncio
-async def test_concurrent_requests_different_mtps(dual_controller_setup):
+async def test_concurrent_requests_different_mtps(dual_controller_setup, e2e_dual_ws_db):
     """Test: Concurrent requests on different MTPs handled correctly"""
-    agent_task = asyncio.create_task(run_agent_for_seconds(5))
+    agent_task = asyncio.create_task(run_agent_for_seconds(5, e2e_dual_ws_db))
     await asyncio.sleep(1)
     
     ctrl1 = dual_controller_setup['ctrl1']
@@ -166,9 +161,9 @@ async def test_concurrent_requests_different_mtps(dual_controller_setup):
 
 
 @pytest.mark.asyncio
-async def test_mtp_connection_isolation(dual_controller_setup):
+async def test_mtp_connection_isolation(dual_controller_setup, e2e_dual_ws_db):
     """Test: Message sent on MTP1 doesn't leak to MTP2"""
-    agent_task = asyncio.create_task(run_agent_for_seconds(5))
+    agent_task = asyncio.create_task(run_agent_for_seconds(5, e2e_dual_ws_db))
     await asyncio.sleep(1)
     
     ctrl1 = dual_controller_setup['ctrl1']
@@ -190,9 +185,9 @@ async def test_mtp_connection_isolation(dual_controller_setup):
 
 
 @pytest.mark.asyncio
-async def test_mtp_failure_doesnt_affect_other_mtps(dual_controller_setup):
+async def test_mtp_failure_doesnt_affect_other_mtps(dual_controller_setup, e2e_dual_ws_db):
     """Test: Failure on one MTP doesn't impact others"""
-    agent_task = asyncio.create_task(run_agent_for_seconds(10))
+    agent_task = asyncio.create_task(run_agent_for_seconds(10, e2e_dual_ws_db))
     await asyncio.sleep(1)
     
     ctrl1 = dual_controller_setup['ctrl1']
@@ -216,9 +211,9 @@ async def test_mtp_failure_doesnt_affect_other_mtps(dual_controller_setup):
 
 
 @pytest.mark.asyncio
-async def test_notification_routing_to_correct_controller(dual_controller_setup):
+async def test_notification_routing_to_correct_controller(dual_controller_setup, e2e_dual_ws_db):
     """Test: Notifications route to correct controller"""
-    agent_task = asyncio.create_task(run_agent_for_seconds(3))
+    agent_task = asyncio.create_task(run_agent_for_seconds(3, e2e_dual_ws_db))
     await asyncio.sleep(2)
     
     ctrl1 = dual_controller_setup['ctrl1']
@@ -236,9 +231,9 @@ async def test_notification_routing_to_correct_controller(dual_controller_setup)
 
 
 @pytest.mark.asyncio
-async def test_stress_multiple_concurrent_mtps(dual_controller_setup):
+async def test_stress_multiple_concurrent_mtps(dual_controller_setup, e2e_dual_ws_db):
     """Test: High load across multiple MTPs"""
-    agent_task = asyncio.create_task(run_agent_for_seconds(10))
+    agent_task = asyncio.create_task(run_agent_for_seconds(10, e2e_dual_ws_db))
     await asyncio.sleep(1)
     
     ctrl1 = dual_controller_setup['ctrl1']
@@ -265,9 +260,9 @@ async def test_stress_multiple_concurrent_mtps(dual_controller_setup):
 
 # Helper functions
 
-async def run_agent_for_seconds(seconds):
+async def run_agent_for_seconds(seconds, db_path):
     """Run multi-MTP agent for specified duration"""
-    agent = MultiMTPAgent('database/test-dm.json', 'database/runtime/test-db.json')
+    agent = MultiMTPAgent('database/test-dm.json', str(db_path))
     try:
         await asyncio.wait_for(agent.start(), timeout=seconds)
     except asyncio.TimeoutError:
